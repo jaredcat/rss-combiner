@@ -1,0 +1,103 @@
+name: Deploy RSS Combiner
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_deploy:
+        description: 'Force deployment even if no changes detected'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Only run if this is not the template repository itself
+    if: github.repository != 'jaredcat/rss-combiner'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: List existing R2 buckets
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          command: r2 bucket list
+        id: list_buckets
+
+      - name: Create R2 bucket if needed
+        run: |
+          BUCKET_NAME=$(grep 'bucket_name' wrangler.toml | cut -d'"' -f2)
+          echo "Required bucket: $BUCKET_NAME"
+
+          # Check if bucket exists in the list
+          if echo "${{ steps.list_buckets.outputs.command-output }}" | grep -q "$BUCKET_NAME"; then
+            echo "✅ Bucket '$BUCKET_NAME' already exists"
+          else
+            echo "📦 Creating bucket '$BUCKET_NAME'..."
+            # Create the bucket - this step may fail if there's a race condition, but that's okay
+            echo "BUCKET_NAME=$BUCKET_NAME" >> $GITHUB_ENV
+          fi
+
+      - name: Create bucket with wrangler
+        if: env.BUCKET_NAME != ''
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          command: r2 bucket create ${{ env.BUCKET_NAME }}
+        continue-on-error: true
+
+      - name: Upload cover image if exists
+        run: |
+          # Check for cover image files
+          if [ -f "cover.jpg" ] || [ -f "cover.jpeg" ] || [ -f "cover.png" ]; then
+            echo "Found cover image, uploading to R2..."
+            bun run upload-cover || echo "Cover upload failed, continuing deployment"
+          else
+            echo "No cover image found, skipping upload"
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          command: deploy
+        id: deploy
+
+      - name: Trigger initial feed generation
+        run: |
+          # Use the deployment URL from wrangler output if available
+          if [ -n "${{ steps.deploy.outputs.deployment-url }}" ]; then
+            WORKER_URL="${{ steps.deploy.outputs.deployment-url }}"
+            echo "Using deployment URL from wrangler: $WORKER_URL"
+          else
+            # Fallback to manual construction
+            WORKER_NAME=$(grep '^name' wrangler.toml | cut -d'"' -f2)
+            WORKER_URL="https://${WORKER_NAME}.workers.dev"
+            echo "Using fallback URL construction: $WORKER_URL"
+          fi
+
+          echo "Triggering initial feed generation at: $WORKER_URL"
+
+          # Wait a moment for deployment to complete
+          sleep 10
+
+          # Trigger feed generation
+          curl -f "$WORKER_URL/deploy-trigger" || echo "Feed generation trigger failed, but deployment succeeded"
+
+          echo "✅ Deployment complete!"
+          echo "🌐 Your RSS feed is available at: $WORKER_URL/podcasts.xml"
+          echo "🩺 Health check: $WORKER_URL/healthcheck"

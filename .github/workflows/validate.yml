@@ -1,0 +1,52 @@
+name: Validate Configuration
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    # Only run if this is not the template repository itself
+    if: github.repository != 'jaredcat/rss-combiner'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Validate configuration
+        run: bun run setup
+
+      - name: Check for common issues
+        run: |
+          echo "🔍 Checking for common configuration issues..."
+
+          # Check if worker name is still default
+          if grep -q "your-podcast-feed-generator" wrangler.toml; then
+            echo "⚠️  Warning: Worker name appears to be the default template value"
+            echo "   Consider changing 'name' in wrangler.toml to something unique"
+          fi
+
+          # Check if bucket name is still default
+          if grep -q "your-podcasts-xml" wrangler.toml; then
+            echo "⚠️  Warning: Bucket name appears to be the default template value"
+            echo "   Consider changing 'bucket_name' in wrangler.toml to something unique"
+          fi
+
+          # Check if any feeds are still using example URLs
+          if grep -q "example.com" wrangler.toml; then
+            echo "❌ Error: Found example.com URLs in configuration"
+            echo "   Please replace all example feed URLs with real RSS feeds"
+            exit 1
+          fi
+
+          echo "✅ Configuration validation completed"

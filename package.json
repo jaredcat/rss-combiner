@@ -1,0 +1,44 @@
+{
+  "name": "rss-combiner",
+  "version": "1.0.0",
+  "description": "A Cloudflare Worker-based RSS feed combiner that merges multiple podcast feeds into a single, unified feed",
+  "module": "index.ts",
+  "type": "module",
+  "scripts": {
+    "setup": "bun run scripts/setup.ts",
+    "upload-cover": "bun run scripts/upload-cover.ts",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy && sleep 5 && curl https://your-worker-name.your-subdomain.workers.dev/deploy-trigger",
+    "build": "wrangler build",
+    "generate": "bun run scripts/generate-xml.ts > podcasts.xml",
+    "test-local": "bun run scripts/generate-xml.ts | head -50"
+  },
+  "keywords": [
+    "rss",
+    "podcast",
+    "feed",
+    "combiner",
+    "cloudflare",
+    "workers",
+    "r2"
+  ],
+  "author": "RSS Combiner Template",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jaredcat/rss-combiner.git"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "rss": "^1.2.2",
+    "fast-xml-parser": "^5.2.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250529.0",
+    "@iarna/toml": "^2.2.5",
+    "@types/bun": "latest",
+    "@types/rss": "^0.0.32"
+  }
+}

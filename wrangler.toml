@@ -1,0 +1,53 @@
+name = "your-podcast-feed-generator"  # TODO: Change this to your unique worker name
+main = "src/worker.ts"
+compatibility_date = "2025-05-05"
+compatibility_flags = ["nodejs_compat"]
+
+[[r2_buckets]]
+binding = "XML_BUCKET"
+bucket_name = "your-podcasts-xml"  # TODO: Change this to your unique bucket name
+
+[triggers]
+crons = ["0 */1 * * *"]  # Updates every hour - adjust as needed
+
+[observability.logs]
+enabled = true
+
+[vars]
+# Feed metadata - customize these for your combined feed
+FEED_TITLE = "My Combined Podcast Feed"  # TODO: Customize your feed title
+FEED_IMAGE_URL = "https://your-podcasts-xml.r2.dev/cover.jpg"  # TODO: Upload with 'bun run upload-cover' or use external URL
+
+# Default cutoff date for feeds without specific cutoffs
+DEFAULT_CUTOFF_DATE_DAY = "1"
+DEFAULT_CUTOFF_DATE_MONTH = "1"
+DEFAULT_CUTOFF_DATE_YEAR = "2024"
+FEED_INDEX_PADDING = "2"
+
+# Example feeds - replace with your own!
+# Format: FEED_XX_URL where XX is zero-padded (01, 02, 03, etc.)
+
+# Example Tech Podcast
+FEED_01_URL = "https://feeds.example.com/tech-podcast"
+FEED_01_CUTOFF_YEAR = "2023"  # Optional: only episodes from 2023 onwards
+
+# Example News Podcast
+FEED_02_URL = "https://feeds.example.com/news-podcast"
+# No cutoff specified = includes all episodes
+
+# Example Comedy Podcast
+FEED_03_URL = "https://feeds.example.com/comedy-podcast"
+FEED_03_CUTOFF_YEAR = "2022"
+
+# Add more feeds as needed...
+# FEED_04_URL = "https://feeds.example.com/another-podcast"
+# FEED_04_CUTOFF_YEAR = "2024"
+# FEED_04_DATE_SYNC = "true"  # Optional: sync episode dates
+
+# Additional options for each feed:
+# FEED_XX_CUTOFF_YEAR = "YYYY"     # Only include episodes from this year onwards
+# FEED_XX_CUTOFF_MONTH = "MM"      # Combined with year for more precise filtering
+# FEED_XX_CUTOFF_DAY = "DD"        # Combined with year/month for exact date filtering
+# FEED_XX_DATE_SYNC = "true"       # Adjust episode dates for chronological ordering
+
+# You can add up to 99 feeds (FEED_01 through FEED_99)
