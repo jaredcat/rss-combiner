@@ -33,10 +33,10 @@
   },
   "dependencies": {
     "rss": "^1.2.2",
-    "fast-xml-parser": "^5.2.3"
+    "fast-xml-parser": "^5.5.8"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250529.0",
+    "@cloudflare/workers-types": "^4.20260317.1",
     "@iarna/toml": "^2.2.5",
     "@types/bun": "latest",
     "@types/rss": "^0.0.32"
