@@ -6,9 +6,10 @@
   "type": "module",
   "scripts": {
     "setup": "bun run scripts/setup.ts",
+    "ensure-kv-ci": "bun run scripts/ensure-kv-ci.ts",
     "upload-cover": "bun run scripts/upload-cover.ts",
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy && sleep 5 && curl https://your-worker-name.your-subdomain.workers.dev/deploy-trigger",
+    "deploy": "wrangler deploy",
     "build": "wrangler build",
     "generate": "bun run scripts/generate-xml.ts > podcasts.xml",
     "test-local": "bun run scripts/generate-xml.ts | head -50"

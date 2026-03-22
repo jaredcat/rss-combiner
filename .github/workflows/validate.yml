@@ -3,12 +3,14 @@ name: Validate Configuration
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
   validate:
     runs-on: ubuntu-latest
-    # Only run if this is not the template repository itself
+    # Same as deploy: skip on the canonical template source repo (no need to validate the template copy).
     if: github.repository != 'jaredcat/rss-combiner'
 
     steps:
@@ -23,30 +25,31 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Validate configuration
+      - name: Typecheck
+        run: bunx tsc --noEmit
+
+      - name: Validate configuration (setup script)
         run: bun run setup
 
       - name: Check for common issues
         run: |
-          echo "🔍 Checking for common configuration issues..."
+          echo "Checking wrangler.toml..."
 
-          # Check if worker name is still default
-          if grep -q "your-podcast-feed-generator" wrangler.toml; then
-            echo "⚠️  Warning: Worker name appears to be the default template value"
-            echo "   Consider changing 'name' in wrangler.toml to something unique"
-          fi
-
-          # Check if bucket name is still default
-          if grep -q "your-podcasts-xml" wrangler.toml; then
-            echo "⚠️  Warning: Bucket name appears to be the default template value"
-            echo "   Consider changing 'bucket_name' in wrangler.toml to something unique"
-          fi
-
-          # Check if any feeds are still using example URLs
           if grep -q "example.com" wrangler.toml; then
-            echo "❌ Error: Found example.com URLs in configuration"
-            echo "   Please replace all example feed URLs with real RSS feeds"
+            echo "Error: Found example.com URLs in wrangler.toml — replace with real RSS feed URLs."
             exit 1
           fi
 
-          echo "✅ Configuration validation completed"
+          if grep -q "your-podcast-feed-generator" wrangler.toml; then
+            echo "Warning: Worker name is still the template default — change 'name' in wrangler.toml to something globally unique."
+          fi
+
+          if grep -q "your-podcasts-xml" wrangler.toml; then
+            echo "Warning: R2 bucket name is still the template default — change bucket_name to something unique."
+          fi
+
+          if grep -q 'id = "00000000000000000000000000000000"' wrangler.toml; then
+            echo "Note: KV id is still the placeholder — GitHub Actions will create the namespace on deploy. For local wrangler dev, create a KV namespace and paste its id, or deploy once and copy the id from the workflow log."
+          fi
+
+          echo "Validation finished."

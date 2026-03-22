@@ -7,12 +7,12 @@ compatibility_flags = ["nodejs_compat"]
 binding = "XML_BUCKET"
 bucket_name = "your-podcasts-xml"  # TODO: Change this to your unique bucket name
 
-# KV stores admin-editable feed config (title, image, feeds, cover mode). Create with:
-#   wrangler kv namespace create rss-combiner-config
-# Then paste the id below (and optionally set preview_id for wrangler dev).
+# KV stores admin-editable feed config (title, image, feeds, cover mode).
+# GitHub Actions creates the namespace and patches this id on each deploy while it stays the placeholder.
+# For local dev only: wrangler kv namespace create rss-combiner-kv-<worker-name> — or copy the id from CI logs after first deploy.
 [[kv_namespaces]]
 binding = "CONFIG_KV"
-id = "00000000000000000000000000000000"  # TODO: Replace with id from wrangler kv namespace create
+id = "00000000000000000000000000000000"  # Replaced automatically in CI, or paste a real id for local wrangler dev
 
 [triggers]
 crons = ["0 */1 * * *"]  # Updates every hour - adjust as needed
@@ -24,7 +24,8 @@ enabled = true
 # Feed metadata - customize these for your combined feed
 FEED_TITLE = "Chronological podcast mix (demo)"  # TODO: Customize your feed title
 FEED_IMAGE_URL = "https://your-podcasts-xml.r2.dev/cover.jpg"  # TODO: Upload with 'bun run upload-cover' or use external URL
-# R2_PUBLIC_BASE_URL = "https://your-podcasts-xml.r2.dev"  # Optional: no trailing slash; enables admin “Upload to R2” + resolves cover URL
+# Match your bucket name (same as bucket_name above). Enables “Upload to R2” in /admin and correct cover URLs:
+# R2_PUBLIC_BASE_URL = "https://your-podcasts-xml.r2.dev"
 # PUBLIC_BASE_URL = "https://your-worker.workers.dev"  # Optional: RSS feed_url / site_url (see README)
 
 # Default cutoff (day / month / year): episodes must be published after this date unless a feed row overrides.

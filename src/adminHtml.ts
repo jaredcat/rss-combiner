@@ -306,7 +306,7 @@ export function adminFormHtml(
   <form method="post" action="/admin/logout" style="margin-top:0.75rem">
     <button type="submit" class="btn-ghost">Sign out</button>
   </form>
-  <p class="hint" style="margin-top:0.75rem">After saving, the combined feed is not regenerated until the next cron run or until you hit <code>/deploy-trigger</code>.</p>
+  <p class="hint" style="margin-top:0.75rem">Saving updates <code>/podcasts.xml</code> right away. The hourly cron also refreshes the feed; use <code>/deploy-trigger</code> if you need a manual rebuild.</p>
   </div>
   <div class="panel" id="preview-wrap">
     <div class="panel-card">

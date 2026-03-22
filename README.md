@@ -11,7 +11,7 @@ A Cloudflare Worker-based RSS feed combiner that allows you to merge multiple po
 - 📦 **R2 Image Hosting**: Upload cover images directly to your R2 bucket
 - ☁️ **Cloudflare R2 Storage**: Fast, global content delivery
 - 🎯 **Health Checks**: Built-in monitoring endpoints
-- ⚙️ **Web admin**: Optional password-protected UI backed by Workers KV (feed title, artwork, feed list, episode cover mode)
+- ⚙️ **Web admin** (`/admin`): Password-protected UI backed by Workers KV (feed title, artwork, feed list, episode cover mode) — the intended way to configure feeds after deploy
 - 🚀 **GitHub Actions Deployment**: Deploy entirely through GitHub (no local setup required!)
 - 🛠️ **Local Development**: Test and preview feeds locally before deployment
 
@@ -25,13 +25,13 @@ The easiest way to deploy your RSS combiner is entirely through GitHub Actions:
 
 **Summary:**
 
-1. Use this template to create your repository
-2. Add your Cloudflare API token to GitHub Secrets
-3. Edit `wrangler.toml` directly in GitHub to configure your feeds
-4. Optionally upload a `cover.jpg` image
-5. Commit changes to automatically deploy!
+1. [Create a Cloudflare account](https://dash.cloudflare.com/sign-up) and an API token (Workers + KV + R2).
+2. Use this template to create **your** repository (not the template source — that name is special; see the setup guide).
+3. Add GitHub secrets: `CLOUDFLARE_API_TOKEN`, and **`ADMIN_SECRET`** (password for `/admin`).
+4. Edit `wrangler.toml` once: unique **`name`** (Worker URL) and **`bucket_name`** (R2), then push to `main`.
+5. Open **`https://<your-worker-name>.workers.dev/admin`**, add podcast RSS URLs, save — your feed is at **`/podcasts.xml`** (KV and R2 are set up by the workflow).
 
-Your feed will be available at: `https://your-worker-name.workers.dev/podcasts.xml`
+Optional: upload `cover.jpg` in the repo, or set `R2_PUBLIC_BASE_URL` for in-admin cover upload (see [GitHub Actions setup](docs/github-actions-setup.md)).
 
 ---
 
@@ -109,21 +109,11 @@ FEED_02_URL = "https://example.com/feed2.xml"
 
 ### 5. Set Up Cloudflare Resources
 
-1. **Create an R2 bucket**:
+1. **R2 bucket** — If you use **GitHub Actions**, the deploy workflow creates the bucket from `bucket_name` in `wrangler.toml` when missing. Locally: `wrangler r2 bucket create your-podcasts-xml`.
 
-   ```bash
-   wrangler r2 bucket create your-podcasts-xml
-   ```
+2. **KV for `/admin`** — If you use **GitHub Actions**, the workflow creates a KV namespace and patches the placeholder id for that run. For **local** `wrangler dev`, create a namespace and paste its id into `[[kv_namespaces]]` → `id`, or copy the id from a successful Actions log after one deploy.
 
-2. **Create a KV namespace for the admin UI** (optional but required to save settings from `/admin`):
-
-   ```bash
-   wrangler kv namespace create rss-combiner-config
-   ```
-
-   Put the returned id into `wrangler.toml` under `[[kv_namespaces]]` → `id`.
-
-3. **Upload your cover image** (if you have one):
+3. **Upload your cover image** (optional):
 
    ```bash
    bun run upload-cover
@@ -135,7 +125,7 @@ FEED_02_URL = "https://example.com/feed2.xml"
    bun run deploy
    ```
 
-5. **Protect the admin UI** (recommended): `wrangler secret put ADMIN_SECRET` and open `/admin`.
+5. **Admin password** — Set `wrangler secret put ADMIN_SECRET` (or add `ADMIN_SECRET` as a GitHub Actions secret so CI applies it). Then open `/admin`.
 
 ### 6. Access Your Combined Feed
 
@@ -273,7 +263,7 @@ Then visit `http://localhost:8787` to test your worker.
 
 - `GET /` or `GET /podcasts.xml`: Returns the combined RSS feed
 - `GET /healthcheck`: Returns health status and last update time
-- `POST /deploy-trigger`: Manually triggers feed regeneration (called automatically after deployment)
+- `POST /deploy-trigger`: Manually triggers feed regeneration (hourly cron also runs this)
 - `GET /admin`: Web admin (requires `ADMIN_SECRET`; disabled until the secret is set)
 - `POST /admin`: Save settings to KV (same auth as above; also accepts `Authorization: Bearer <ADMIN_SECRET>`)
 - `POST /admin/preview`: Returns JSON `{ ok, xml }` for the current form values (same auth as `POST /admin`). Preview reuses cached source RSS bodies (~15 minutes per URL in memory, plus Cloudflare cache on subrequests) so metadata edits do not re-download feeds every time. Send form field `bypassFeedCache=1` (the admin “Refresh feed sources” button does this) to force a full re-fetch.
@@ -286,7 +276,7 @@ Then visit `http://localhost:8787` to test your worker.
 You can configure the feed in either of two ways:
 
 1. **Environment variables** in `wrangler.toml` (`[vars]`) — used when no valid config exists in KV, and by `bun run generate` locally.
-2. **Workers KV** via the web admin — once saved, KV overrides `[vars]` for generation (cron and `/deploy-trigger`).
+2. **Workers KV** via the web admin — once saved, KV overrides `[vars]` for generation (each save regenerates `podcasts.xml`, plus hourly cron and `/deploy-trigger`).
 
 Optional `PUBLIC_BASE_URL` in `[vars]` sets the RSS `feed_url`, `site_url`, and related links (defaults to a placeholder until you set it or save the admin form):
 
@@ -308,10 +298,9 @@ Apache `.htaccess` files are **not** applied to Cloudflare Workers. To restrict 
 
 **One-time setup**
 
-1. Create a KV namespace and copy its id into `wrangler.toml` under `[[kv_namespaces]]` → `id` (replace the placeholder).
-2. Deploy the worker, then set the admin password: `wrangler secret put ADMIN_SECRET`.
-3. Open `https://<your-worker>.workers.dev/admin`, sign in, and save your settings. Expand **First-time setup: cutoffs & timeline merge** (above the default cutoff fields) for a short guide; for a full tutorial see [First-time setup: cutoffs and timeline merge](#first-time-cutoffs) below. Configuration is stored as JSON under the KV key `config:v1` (you edit feeds with add/remove rows in the UI—no raw JSON). The page includes a **rendered** preview (channel + episodes) and a **raw XML** tab, both updated as you edit.
-4. Regenerate the feed once (wait for cron or call `POST /deploy-trigger`) so `podcasts.xml` reflects the new config.
+1. **KV** — With GitHub Actions, the deploy workflow creates the namespace while `id` in `wrangler.toml` is still the placeholder. Locally, create a namespace and paste its id, or deploy once via Actions and copy the id from the log.
+2. **Admin password** — `wrangler secret put ADMIN_SECRET`, or set the `ADMIN_SECRET` GitHub Actions secret so CI syncs it on deploy.
+3. Open `https://<your-worker>.workers.dev/admin`, sign in, and save your settings. Saving updates `podcasts.xml` immediately. Expand **First-time setup: cutoffs & timeline merge** (above the default cutoff fields) for a short guide; for a full tutorial see [First-time setup: cutoffs and timeline merge](#first-time-cutoffs) below. Configuration is stored as JSON under the KV key `config:v1` (you edit feeds with add/remove rows in the UI—no raw JSON). The page includes a **rendered** preview (channel + episodes) and a **raw XML** tab, both updated as you edit.
 
 `FEED_INDEX_PADDING` in `wrangler.toml` only applies when loading feeds from numbered `FEED_01_URL`–style vars (e.g. `bun run generate`); the admin UI uses a feed list and does not expose padding.
 
@@ -369,20 +358,6 @@ The admin UI also has an expandable **First-time setup: cutoffs & timeline merge
 
 See the **[GitHub Actions Setup Guide](docs/github-actions-setup.md)** for complete instructions.
 
-### Local Deployment
-
-The project includes automatic deployment on feed updates:
-
-```bash
-bun run deploy
-```
-
-This command:
-
-1. Deploys the worker to Cloudflare
-2. Triggers an initial feed generation
-3. Sets up the hourly cron job for updates
-
 ### Manual Updates
 
 Force a feed update:
@@ -413,6 +388,16 @@ curl https://your-worker.workers.dev/healthcheck
 - **Feed not updating**: Check the cron trigger is enabled and worker logs in Cloudflare dashboard
 - **Invalid feed**: Test locally with `bun run generate` to debug feed issues
 
+### Local Deployment
+
+The project includes automatic deployment on feed updates:
+
+```bash
+bun run deploy
+```
+
+This command deploys the worker to Cloudflare. The hourly cron (and `/admin` saves) regenerate `podcasts.xml`. Use `curl https://<your-worker>.workers.dev/deploy-trigger` if you want a manual rebuild without opening the admin.
+
 ## Contributing
 
 1. Fork the repository
@@ -436,4 +421,4 @@ If you encounter issues:
 
 ---
 
-**Note**: This template includes example podcast feeds in the configuration. Make sure to replace them with your own feeds before deploying.
+**Note**: The default `wrangler.toml` includes demo podcast feeds so the Worker has something to merge before you use `/admin`. You can clear them in the admin UI after you set `ADMIN_SECRET`, or edit `wrangler.toml` before the first deploy.

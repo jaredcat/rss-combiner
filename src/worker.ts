@@ -230,10 +230,13 @@ export default {
         return adminDisabledResponse();
       }
       if (!(await isAdminAuthenticated(request, env))) {
-        return new Response(JSON.stringify({ ok: false, error: 'Unauthorized' }), {
-          status: 401,
-          headers: { 'content-type': 'application/json; charset=utf-8' },
-        });
+        return new Response(
+          JSON.stringify({ ok: false, error: 'Unauthorized' }),
+          {
+            status: 401,
+            headers: { 'content-type': 'application/json; charset=utf-8' },
+          },
+        );
       }
 
       const form = await request.formData();
@@ -248,12 +251,9 @@ export default {
           cacheFeedBodies: !bypass,
           includeFeedChannelTitles: true,
         });
-        return new Response(
-          JSON.stringify({ ok: true, xml, channelTitles }),
-          {
-            headers: { 'content-type': 'application/json; charset=utf-8' },
-          },
-        );
+        return new Response(JSON.stringify({ ok: true, xml, channelTitles }), {
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+        });
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'Preview failed';
         return new Response(JSON.stringify({ ok: false, error: msg }), {
@@ -268,10 +268,13 @@ export default {
         return adminDisabledResponse();
       }
       if (!(await isAdminAuthenticated(request, env))) {
-        return new Response(JSON.stringify({ ok: false, error: 'Unauthorized' }), {
-          status: 401,
-          headers: { 'content-type': 'application/json; charset=utf-8' },
-        });
+        return new Response(
+          JSON.stringify({ ok: false, error: 'Unauthorized' }),
+          {
+            status: 401,
+            headers: { 'content-type': 'application/json; charset=utf-8' },
+          },
+        );
       }
 
       const feedImageUrl = resolveCoverPublicUrl(env);
@@ -292,10 +295,13 @@ export default {
       const form = await request.formData();
       const file = form.get('file');
       if (!file || typeof file === 'string') {
-        return new Response(JSON.stringify({ ok: false, error: 'Missing file' }), {
-          status: 400,
-          headers: { 'content-type': 'application/json; charset=utf-8' },
-        });
+        return new Response(
+          JSON.stringify({ ok: false, error: 'Missing file' }),
+          {
+            status: 400,
+            headers: { 'content-type': 'application/json; charset=utf-8' },
+          },
+        );
       }
 
       const blob = file as File;
@@ -364,6 +370,15 @@ export default {
         const stored = appConfigToStored(config);
         await env.CONFIG_KV.put(CONFIG_KV_KEY, JSON.stringify(stored));
 
+        try {
+          const xml = await generateXml(env, { quiet: true });
+          await env.XML_BUCKET.put('podcasts.xml', xml, {
+            httpMetadata: { contentType: 'application/xml' },
+          });
+        } catch (e) {
+          console.error('Regenerate after admin save failed:', e);
+        }
+
         return new Response(null, {
           status: 302,
           headers: { Location: '/admin?saved=1' },
@@ -372,7 +387,11 @@ export default {
         const msg = e instanceof Error ? e.message : 'Invalid input';
         const current = await resolveConfig(env, env.CONFIG_KV);
         return new Response(
-          adminFormHtml(current, `Error: ${msg}`, adminPageContext(request, env)),
+          adminFormHtml(
+            current,
+            `Error: ${msg}`,
+            adminPageContext(request, env),
+          ),
           {
             status: 400,
             headers: { 'content-type': 'text/html; charset=utf-8' },
