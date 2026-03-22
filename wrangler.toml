@@ -7,10 +7,12 @@ compatibility_flags = ["nodejs_compat"]
 binding = "XML_BUCKET"
 bucket_name = "your-podcasts-xml"  # TODO: Change this to your unique bucket name
 
+# KV stores admin-editable feed config (title, image, feeds, cover mode). Create with:
+#   wrangler kv namespace create rss-combiner-config
+# Then paste the id below (and optionally set preview_id for wrangler dev).
 [[kv_namespaces]]
-binding = "FEED_STORAGE"
-id = "YOUR_KV_NAMESPACE_ID"
-preview_id = "YOUR_KV_PREVIEW_NAMESPACE_ID"
+binding = "CONFIG_KV"
+id = "00000000000000000000000000000000"  # TODO: Replace with id from wrangler kv namespace create
 
 [triggers]
 crons = ["0 */1 * * *"]  # Updates every hour - adjust as needed
@@ -20,42 +22,50 @@ enabled = true
 
 [vars]
 # Feed metadata - customize these for your combined feed
-FEED_TITLE = "My Combined Podcast Feed"  # TODO: Customize your feed title
+FEED_TITLE = "Chronological podcast mix (demo)"  # TODO: Customize your feed title
 FEED_IMAGE_URL = "https://your-podcasts-xml.r2.dev/cover.jpg"  # TODO: Upload with 'bun run upload-cover' or use external URL
+# R2_PUBLIC_BASE_URL = "https://your-podcasts-xml.r2.dev"  # Optional: no trailing slash; enables admin “Upload to R2” + resolves cover URL
+# PUBLIC_BASE_URL = "https://your-worker.workers.dev"  # Optional: RSS feed_url / site_url (see README)
 
-# Default cutoff date for feeds without specific cutoffs
-DEFAULT_CUTOFF_DATE_DAY = "1"
-DEFAULT_CUTOFF_DATE_MONTH = "1"
+# Default cutoff (day / month / year): episodes must be published after this date unless a feed row overrides.
+# Same vars as main; feeds with an older per-feed cutoff year get year-shifted (see admin UI -> Source feeds).
+DEFAULT_CUTOFF_DATE_DAY = "20"
+DEFAULT_CUTOFF_DATE_MONTH = "7"
 DEFAULT_CUTOFF_DATE_YEAR = "2024"
 FEED_INDEX_PADDING = "2"
 
-# Admin UI Settings
-ADMIN_PASSWORD = "changeme"  # TODO: Change this password!
+# Demo defaults: six public feeds with varied cutoff years + merge timeline on every row so a fresh
+# deploy shows year-shifting without editing JSON. Swap for your podcasts.
+# Format: FEED_XX_URL (contiguous 01, 02, ...). Optional per feed: CUTOFF_* , MERGE_TIMELINE.
 
-# Example feeds - replace with your own!
-# Format: FEED_XX_URL where XX is zero-padded (01, 02, 03, etc.)
+# Oh No, Ross and Carrie — long back catalog; older cutoff + year-shift mixes eras with other shows
+# instead of dumping years of backlog before newer podcasts.
+FEED_01_URL = "https://feeds.feedburner.com/OhNoPodcast"
+FEED_01_CUTOFF_YEAR = "2013"
+FEED_01_MERGE_TIMELINE = "true"
 
-# Example Tech Podcast
-FEED_01_URL = "https://feeds.example.com/tech-podcast"
-FEED_01_CUTOFF_YEAR = "2023"  # Optional: only episodes from 2023 onwards
+FEED_02_URL = "https://feeds.npr.org/510289/podcast.xml"
+FEED_02_CUTOFF_YEAR = "2022"
+FEED_02_MERGE_TIMELINE = "true"
 
-# Example News Podcast
-FEED_02_URL = "https://feeds.example.com/news-podcast"
-# No cutoff specified = includes all episodes
+FEED_03_URL = "https://rss.art19.com/factually--with-adam-conover"
+FEED_03_CUTOFF_YEAR = "2023"
+FEED_03_MERGE_TIMELINE = "true"
 
-# Example Comedy Podcast
-FEED_03_URL = "https://feeds.example.com/comedy-podcast"
-FEED_03_CUTOFF_YEAR = "2022"
+FEED_04_URL = "https://feeds.megaphone.fm/darknetdiaries"
+FEED_04_CUTOFF_YEAR = "2019"
+FEED_04_MERGE_TIMELINE = "true"
 
-# Add more feeds as needed...
-# FEED_04_URL = "https://feeds.example.com/another-podcast"
-# FEED_04_CUTOFF_YEAR = "2024"
-# FEED_04_DATE_SYNC = "true"  # Optional: sync episode dates
+FEED_05_URL = "https://rss.art19.com/the-climate-deniers-playbook"
+FEED_05_CUTOFF_YEAR = "2023"
+FEED_05_MERGE_TIMELINE = "true"
 
-# Additional options for each feed:
-# FEED_XX_CUTOFF_YEAR = "YYYY"     # Only include episodes from this year onwards
-# FEED_XX_CUTOFF_MONTH = "MM"      # Combined with year for more precise filtering
-# FEED_XX_CUTOFF_DAY = "DD"        # Combined with year/month for exact date filtering
-# FEED_XX_DATE_SYNC = "true"       # Adjust episode dates for chronological ordering
+FEED_06_URL = "https://feeds.simplecast.com/y1LF_sn2"
+FEED_06_CUTOFF_YEAR = "2023"
+FEED_06_MERGE_TIMELINE = "true"
+
+# Additional options per feed:
+# FEED_XX_CUTOFF_MONTH / FEED_XX_CUTOFF_DAY — optional, with CUTOFF_YEAR
+# FEED_XX_MERGE_TIMELINE = "true" — same as admin “Merge this feed’s timeline”
 
 # You can add up to 99 feeds (FEED_01 through FEED_99)

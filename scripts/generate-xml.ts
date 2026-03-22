@@ -1,5 +1,6 @@
 import { parse } from '@iarna/toml';
 import fs from 'fs/promises';
+import { envToAppConfig } from '../src/config';
 import type { Env } from '../src/worker';
 import { XMLBuilder } from '../src/xmlBuilder';
 
@@ -25,7 +26,8 @@ async function loadWranglerConfig(): Promise<Env> {
 async function generateXml() {
   try {
     const env = await loadWranglerConfig();
-    const xml = await XMLBuilder.fetchXml(env, { quiet: true });
+    const config = envToAppConfig(env);
+    const xml = await XMLBuilder.fetchXml(config, { quiet: true });
     console.log(xml);
   } catch (error) {
     console.error('Error generating XML:', error);

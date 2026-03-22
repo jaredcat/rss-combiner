@@ -50,7 +50,7 @@ FEED_02_URL = "https://feeds.example.com/your-second-podcast"
 # Add more feeds as needed...
 ```
 
-4. Commit the changes (this will trigger a deployment)
+1. Commit the changes (this will trigger a deployment)
 
 ### 5. Add Cover Image (Optional)
 
@@ -101,7 +101,7 @@ To listen to your combined feed on your phone or tablet:
 
 ### Feed Settings
 
-Edit these in `wrangler.toml` under the `[vars]` section:
+Edit these in `wrangler.toml` under the `[vars]` section. After deploy, you can optionally use the **web admin** at `/admin` (Workers KV) to manage the same settings without committing feed URLs to git; see the main README for `ADMIN_SECRET`, KV namespace id in `wrangler.toml`, and security notes.
 
 ```toml
 [vars]
@@ -130,7 +130,7 @@ For each feed (replace `XX` with zero-padded numbers like `01`, `02`, etc.):
 - `FEED_XX_CUTOFF_YEAR`: Only episodes from this year onwards
 - `FEED_XX_CUTOFF_MONTH`: Combined with year for precise filtering
 - `FEED_XX_CUTOFF_DAY`: Combined with year/month for exact date filtering
-- `FEED_XX_DATE_SYNC`: Set to `"true"` to adjust episode dates for chronological ordering
+- `FEED_XX_MERGE_TIMELINE`: Set to `"true"` for **Merge this feed’s timeline** (year-shifting when per-feed cutoff year is older than the default.
 
 ## 🔄 Automatic Updates
 
