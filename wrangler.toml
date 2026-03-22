@@ -7,6 +7,11 @@ compatibility_flags = ["nodejs_compat"]
 binding = "XML_BUCKET"
 bucket_name = "your-podcasts-xml"  # TODO: Change this to your unique bucket name
 
+[[kv_namespaces]]
+binding = "FEED_STORAGE"
+id = "YOUR_KV_NAMESPACE_ID"
+preview_id = "YOUR_KV_PREVIEW_NAMESPACE_ID"
+
 [triggers]
 crons = ["0 */1 * * *"]  # Updates every hour - adjust as needed
 
@@ -23,6 +28,9 @@ DEFAULT_CUTOFF_DATE_DAY = "1"
 DEFAULT_CUTOFF_DATE_MONTH = "1"
 DEFAULT_CUTOFF_DATE_YEAR = "2024"
 FEED_INDEX_PADDING = "2"
+
+# Admin UI Settings
+ADMIN_PASSWORD = "changeme"  # TODO: Change this password!
 
 # Example feeds - replace with your own!
 # Format: FEED_XX_URL where XX is zero-padded (01, 02, 03, etc.)
