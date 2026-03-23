@@ -14,8 +14,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # Skip deploy on the canonical template source repo (no Cloudflare token there). Repos created
-    # from "Use this template" have a different github.repository, so deploy runs for those.
+    # Skip on the canonical template repo (no CF token). Forks and “Use this template” repos run normally.
     if: github.repository != 'jaredcat/rss-combiner'
 
     steps:
