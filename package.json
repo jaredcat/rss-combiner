@@ -5,6 +5,7 @@
   "module": "index.ts",
   "type": "module",
   "scripts": {
+    "wrangler": "wrangler",
     "setup": "bun run scripts/setup.ts",
     "ensure-kv-ci": "bun run scripts/ensure-kv-ci.ts",
     "upload-cover": "bun run scripts/upload-cover.ts",
@@ -37,6 +38,7 @@
     "fast-xml-parser": "^5.5.8"
   },
   "devDependencies": {
+    "wrangler": "^4.76.0",
     "@cloudflare/workers-types": "^4.20260317.1",
     "@iarna/toml": "^2.2.5",
     "@types/bun": "latest",
