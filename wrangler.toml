@@ -1,7 +1,7 @@
 name = "your-podcast-feed-generator"  # TODO: Change this to your unique worker name
 main = "src/worker.ts"
-compatibility_date = "2025-05-05"
-compatibility_flags = ["nodejs_compat"]
+compatibility_date = "2026-09-01"
+compatibility_flags = []
 
 [[r2_buckets]]
 binding = "XML_BUCKET"

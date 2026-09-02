@@ -179,6 +179,7 @@ dist
 .wrangler
 .dev.vars
 .env
+worker-configuration.d.ts
 
 # Generated content
 podcasts.xml

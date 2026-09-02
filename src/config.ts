@@ -39,6 +39,17 @@ function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
 }
 
+/** Normalize coverMode from form/KV/unknown input. */
+export function parseCoverMode(value: unknown): CoverMode {
+  if (value === 'main') {
+    return 'main';
+  }
+  if (value === 'per_feed_main') {
+    return 'per_feed_main';
+  }
+  return 'source';
+}
+
 export function isValidFeedEntry(x: unknown): x is FeedEntry {
   if (!x || typeof x !== 'object') return false;
   const o = x as Record<string, unknown>;
@@ -153,12 +164,7 @@ function mergeStored(stored: StoredConfig, env: Env): AppConfig {
         mergeTimeline: f.mergeTimeline === true,
       };
     }),
-    coverMode:
-      stored.coverMode === 'main'
-        ? 'main'
-        : stored.coverMode === 'per_feed_main'
-          ? 'per_feed_main'
-          : 'source',
+    coverMode: parseCoverMode(stored.coverMode),
     publicBaseUrl:
       stored.publicBaseUrl?.replace(/\/$/, '') || fallback.publicBaseUrl,
   };

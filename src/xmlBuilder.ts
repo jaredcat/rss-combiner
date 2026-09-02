@@ -65,16 +65,17 @@ async function parseFeed(
   today.setHours(23, 59, 59);
 
   const rawItems = channel.item;
-  const itemList: any[] = Array.isArray(rawItems)
-    ? rawItems
-    : rawItems
-      ? [rawItems]
-      : [];
+  let itemList: any[] = [];
+  if (Array.isArray(rawItems)) {
+    itemList = rawItems;
+  } else if (rawItems) {
+    itemList = [rawItems];
+  }
 
   const items: CustomItem[] = itemList
     .flatMap((item: any): CustomItem[] => {
       const originalDate = new Date(normalizeRssText(item.pubDate));
-      let sortDate = new Date(originalDate);
+      const sortDate = new Date(originalDate);
 
       // When mergeTimeline is on for this feed: shift years forward so an
       // older per-feed cutoff year lines up with the default timeline
@@ -226,6 +227,8 @@ export class XMLBuilder {
         },
       }),
       custom_namespaces: {
+        // Podcast namespace URIs are historically http:// (not fetch URLs).
+        // eslint-disable-next-line sonarjs/no-clear-text-protocols -- XML namespace identifiers
         itunes: 'http://www.itunes.com/dtds/podcast-1.0.dtd',
         content: 'http://purl.org/rss/1.0/modules/content/',
       },
@@ -304,8 +307,11 @@ export class XMLBuilder {
               }
             });
           } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
             throw new Error(
-              `Failed to process feed ${feedConfig.url}: ${error}`,
+              `Failed to process feed ${feedConfig.url}: ${message}`,
+              { cause: error },
             );
           }
         }),

@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -37,7 +37,7 @@ jobs:
         run: bun run ensure-kv-ci
 
       - name: List existing R2 buckets
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
@@ -59,7 +59,7 @@ jobs:
 
       - name: Create bucket with wrangler
         if: env.BUCKET_NAME != ''
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
@@ -79,7 +79,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
       - name: Deploy to Cloudflare Workers
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
@@ -118,5 +118,5 @@ jobs:
           echo ""
           echo "  Next: open /admin, add your podcast RSS URLs, then save."
           echo "  Enable R2 cover upload in wrangler.toml: set R2_PUBLIC_BASE_URL = https://${BUCKET_NAME}.r2.dev (no trailing slash)."
-          echo "  Combined feed updates on save (or hourly cron). POST $WORKER_URL/deploy-trigger forces a rebuild."
+          echo "  Combined feed updates on save (or hourly cron). Authenticated POST $WORKER_URL/deploy-trigger (Bearer ADMIN_SECRET) forces a rebuild."
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

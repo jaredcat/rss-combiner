@@ -1,20 +1,31 @@
 {
   "name": "rss-combiner",
   "version": "1.0.0",
-  "description": "A Cloudflare Worker-based RSS feed combiner that merges multiple podcast feeds into a single, unified feed",
-  "module": "index.ts",
-  "type": "module",
-  "scripts": {
-    "wrangler": "wrangler",
-    "setup": "bun run scripts/setup.ts",
-    "ensure-kv-ci": "bun run scripts/ensure-kv-ci.ts",
-    "upload-cover": "bun run scripts/upload-cover.ts",
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "build": "wrangler build",
-    "generate": "bun run scripts/generate-xml.ts > podcasts.xml",
-    "test-local": "bun run scripts/generate-xml.ts | head -50"
+  "author": "RSS Combiner Template",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jaredcat/rss-combiner.git"
   },
+  "module": "index.ts",
+  "dependencies": {
+    "rss": "^1.2.2",
+    "fast-xml-parser": "^5.11.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260902.1",
+    "@eslint/js": "^10.0.1",
+    "@iarna/toml": "^2.2.5",
+    "@types/bun": "latest",
+    "@types/node": "^26.4.1",
+    "@types/rss": "^0.0.32",
+    "eslint": "^10.9.1",
+    "eslint-plugin-sonarjs": "^4.2.0",
+    "globals": "^17.12.0",
+    "typescript": "5.9.2",
+    "typescript-eslint": "^8.69.0",
+    "wrangler": "^4.128.0"
+  },
+  "description": "A Cloudflare Worker-based RSS feed combiner that merges multiple podcast feeds into a single, unified feed",
   "keywords": [
     "rss",
     "podcast",
@@ -24,24 +35,19 @@
     "workers",
     "r2"
   ],
-  "author": "RSS Combiner Template",
   "license": "AGPL-3.0-only",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/jaredcat/rss-combiner.git"
+  "scripts": {
+    "wrangler": "wrangler",
+    "setup": "bun run scripts/setup.ts",
+    "ensure-kv-ci": "bun run scripts/ensure-kv-ci.ts",
+    "upload-cover": "bun run scripts/upload-cover.ts",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "wrangler build",
+    "generate": "bun run scripts/generate-xml.ts > podcasts.xml",
+    "test-local": "bun run scripts/generate-xml.ts | head -50",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   },
-  "peerDependencies": {
-    "typescript": "^5.0.0"
-  },
-  "dependencies": {
-    "rss": "^1.2.2",
-    "fast-xml-parser": "^5.5.8"
-  },
-  "devDependencies": {
-    "wrangler": "^4.76.0",
-    "@cloudflare/workers-types": "^4.20260317.1",
-    "@iarna/toml": "^2.2.5",
-    "@types/bun": "latest",
-    "@types/rss": "^0.0.32"
-  }
+  "type": "module"
 }

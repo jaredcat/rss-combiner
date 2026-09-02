@@ -77,8 +77,8 @@ Edit `wrangler.toml` to configure your RSS feeds:
 ```toml
 name = "your-podcast-feed-generator"  # Change this to your worker name
 main = "src/worker.ts"
-compatibility_date = "2025-05-05"
-compatibility_flags = ["nodejs_compat"]
+compatibility_date = "2026-09-01"
+compatibility_flags = []
 
 [[r2_buckets]]
 binding = "XML_BUCKET"
@@ -227,6 +227,7 @@ Where `XX` is a zero-padded number (01, 02, 03, etc.).
 ```bash
 # Setup and validation
 bun run setup              # Check configuration and show setup status
+bun run lint               # ESLint (typescript-eslint + SonarJS)
 
 # Cover image management
 bun run upload-cover       # Upload cover.jpg/cover.png to R2 bucket
@@ -263,7 +264,7 @@ Then visit `http://localhost:8787` to test your worker.
 
 - `GET /` or `GET /podcasts.xml`: Returns the combined RSS feed
 - `GET /healthcheck`: Returns health status and last update time
-- `POST /deploy-trigger`: Manually triggers feed regeneration (hourly cron also runs this)
+- `POST /deploy-trigger`: Manually triggers feed regeneration (requires `ADMIN_SECRET` via cookie or `Authorization: Bearer`; hourly cron also regenerates without HTTP auth)
 - `GET /admin`: Web admin (requires `ADMIN_SECRET`; disabled until the secret is set)
 - `POST /admin`: Save settings to KV (same auth as above; also accepts `Authorization: Bearer <ADMIN_SECRET>`)
 - `POST /admin/preview`: Returns JSON `{ ok, xml }` for the current form values (same auth as `POST /admin`). Preview reuses cached source RSS bodies (~15 minutes per URL in memory, plus Cloudflare cache on subrequests) so metadata edits do not re-download feeds every time. Send form field `bypassFeedCache=1` (the admin “Refresh feed sources” button does this) to force a full re-fetch.
@@ -363,7 +364,8 @@ See the **[GitHub Actions Setup Guide](docs/github-actions-setup.md)** for compl
 Force a feed update:
 
 ```bash
-curl https://your-worker.workers.dev/deploy-trigger
+curl -X POST https://your-worker.workers.dev/deploy-trigger \
+  -H "Authorization: Bearer YOUR_ADMIN_SECRET"
 ```
 
 ## Monitoring
@@ -396,7 +398,7 @@ The project includes automatic deployment on feed updates:
 bun run deploy
 ```
 
-This command deploys the worker to Cloudflare. The hourly cron (and `/admin` saves) regenerate `podcasts.xml`. Use `curl https://<your-worker>.workers.dev/deploy-trigger` if you want a manual rebuild without opening the admin.
+This command deploys the worker to Cloudflare. The hourly cron (and `/admin` saves) regenerate `podcasts.xml`. Use an authenticated `POST /deploy-trigger` with `Authorization: Bearer <ADMIN_SECRET>` if you want a manual rebuild without opening the admin.
 
 ## Contributing
 

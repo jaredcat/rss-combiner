@@ -4,10 +4,11 @@ import type {
   R2Bucket,
   ScheduledEvent,
 } from '@cloudflare/workers-types';
-import { adminFormHtml, loginHtml, type AdminPageContext } from './adminHtml';
+import { adminFormHtml, loginHtml, type AdminPageContext } from './admin';
 import {
   CONFIG_KV_KEY,
   appConfigToStored,
+  parseCoverMode,
   parseFeedsFromFormData,
   resolveConfig,
   type AppConfig,
@@ -127,13 +128,7 @@ function appConfigFromFormData(form: FormData, env: Env): AppConfig {
   const feedTitle = form.get('feedTitle')?.toString().trim() || '';
   const feedImageUrl = form.get('feedImageUrl')?.toString().trim() || '';
   const publicBaseUrl = form.get('publicBaseUrl')?.toString().trim() || '';
-  const cm = form.get('coverMode')?.toString();
-  const coverMode: AppConfig['coverMode'] =
-    cm === 'main'
-      ? 'main'
-      : cm === 'per_feed_main'
-        ? 'per_feed_main'
-        : 'source';
+  const coverMode = parseCoverMode(form.get('coverMode')?.toString());
   const pad = parseInt(String(env.FEED_INDEX_PADDING || '2'), 10);
 
   const feeds = parseFeedsFromFormData(form);
@@ -171,7 +166,7 @@ async function generateXml(
 }
 
 export default {
-  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+  async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext) {
     try {
       const xml = await generateXml(env, { quiet: false });
       await env.XML_BUCKET.put('podcasts.xml', xml, {
@@ -185,7 +180,9 @@ export default {
     }
   },
 
-  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+  // Admin + public routing lives in one handler; complexity is mostly sequential path checks.
+  // eslint-disable-next-line sonarjs/cognitive-complexity -- route table, not nested logic
+  async fetch(request: Request, env: Env, _ctx: ExecutionContext) {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/$/, '') || '/';
     const secureCookie = url.protocol === 'https:';
@@ -422,6 +419,15 @@ export default {
     }
 
     if (path === '/deploy-trigger') {
+      if (!env.ADMIN_SECRET) {
+        return adminDisabledResponse();
+      }
+      if (!(await isAdminAuthenticated(request, env))) {
+        return new Response(
+          'Unauthorized. Sign in at /admin or send Authorization: Bearer <ADMIN_SECRET>.',
+          { status: 401, headers: { 'content-type': 'text/plain; charset=utf-8' } },
+        );
+      }
       try {
         const xml = await generateXml(env, { quiet: false });
         await env.XML_BUCKET.put('podcasts.xml', xml, {
@@ -454,6 +460,7 @@ export default {
           },
         });
       } catch (error) {
+        console.error('Failed to serve podcasts.xml:', error);
         return new Response('Internal Server Error', { status: 500 });
       }
     }
