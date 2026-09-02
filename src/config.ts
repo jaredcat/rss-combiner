@@ -39,6 +39,12 @@ function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
 }
 
+/** Read a text field from FormData; ignore File values. */
+export function formText(form: FormData, name: string): string {
+  const value = form.get(name);
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 /** Normalize coverMode from form/KV/unknown input. */
 export function parseCoverMode(value: unknown): CoverMode {
   if (value === 'main') {
@@ -60,12 +66,12 @@ export function isValidFeedEntry(x: unknown): x is FeedEntry {
 export function parseFeedsFromFormData(form: FormData): FeedEntry[] {
   const feeds: FeedEntry[] = [];
   for (let i = 0; i < 100; i++) {
-    const url = form.get(`feed_${i}_url`)?.toString().trim() ?? '';
+    const url = formText(form, `feed_${i}_url`);
     if (!url) continue;
     const entry: FeedEntry = { url };
-    const y = form.get(`feed_${i}_cutoffYear`)?.toString().trim();
-    const m = form.get(`feed_${i}_cutoffMonth`)?.toString().trim();
-    const d = form.get(`feed_${i}_cutoffDay`)?.toString().trim();
+    const y = formText(form, `feed_${i}_cutoffYear`);
+    const m = formText(form, `feed_${i}_cutoffMonth`);
+    const d = formText(form, `feed_${i}_cutoffDay`);
     if (y) entry.cutoffYear = y;
     if (m) entry.cutoffMonth = m;
     if (d) entry.cutoffDay = d;
@@ -93,7 +99,7 @@ function isValidStoredConfig(raw: unknown): raw is StoredConfig {
 
 /** Build config from wrangler [vars] / Env only (local scripts, first deploy). */
 export function envToAppConfig(env: Env): AppConfig {
-  const padding = parseInt(String(env.FEED_INDEX_PADDING || '2'), 10);
+  const padding = Number.parseInt(String(env.FEED_INDEX_PADDING || '2'), 10);
   const feeds: FeedEntry[] = [];
   const pad = Number.isFinite(padding) ? padding : 2;
 
@@ -141,7 +147,7 @@ export function envToAppConfig(env: Env): AppConfig {
 function mergeStored(stored: StoredConfig, env: Env): AppConfig {
   const fallback = envToAppConfig(env);
   const pad = stored.feedIndexPadding
-    ? parseInt(String(stored.feedIndexPadding), 10)
+    ? Number.parseInt(String(stored.feedIndexPadding), 10)
     : fallback.feedIndexPadding;
 
   return {

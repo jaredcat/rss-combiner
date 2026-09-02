@@ -7,7 +7,7 @@
  * Optional: CLOUDFLARE_ACCOUNT_ID (required if the token can access multiple accounts)
  */
 
-import fs from 'fs/promises';
+import fs from 'node:fs/promises';
 
 const PLACEHOLDER_ID = '00000000000000000000000000000000';
 
@@ -182,7 +182,9 @@ async function main() {
   console.log(`Patched wrangler.toml with KV namespace id ${newId}`);
 }
 
-main().catch((e) => {
+try {
+  await main();
+} catch (e) {
   console.error(e);
   process.exit(1);
-});
+}

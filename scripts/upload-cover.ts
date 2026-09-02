@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
 import { parse, stringify } from '@iarna/toml';
-import { execSync } from 'child_process';
-import fs from 'fs/promises';
+import { execSync } from 'node:child_process';
+import fs from 'node:fs/promises';
 
 async function uploadCover() {
   console.log('🎨 Uploading cover image to R2...\n');
@@ -80,4 +80,8 @@ async function uploadCover() {
   }
 }
 
-uploadCover().catch(console.error);
+try {
+  await uploadCover();
+} catch (e) {
+  console.error(e);
+}

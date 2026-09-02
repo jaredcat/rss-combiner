@@ -272,9 +272,9 @@ export class XMLBuilder {
               feedConfig.url,
               {
                 yearCutoff: feedConfig.cutoffYear
-                  ? parseInt(feedConfig.cutoffYear, 10)
+                  ? Number.parseInt(feedConfig.cutoffYear, 10)
                   : undefined,
-                defaultCutoffYear: parseInt(defaultYear, 10),
+                defaultCutoffYear: Number.parseInt(defaultYear, 10),
                 mergeTimeline: feedConfig.mergeTimeline,
               },
               fetchFeedText,
@@ -290,9 +290,10 @@ export class XMLBuilder {
               if (item.pubDate) {
                 const pubDate = new Date(item.pubDateOriginal || '');
                 const cutoffDate = new Date(
-                  parseInt(feedConfig.cutoffYear || defaultYear, 10),
-                  parseInt(feedConfig.cutoffMonth || defaultMonth, 10) - 1,
-                  parseInt(feedConfig.cutoffDay || defaultDay, 10),
+                  Number.parseInt(feedConfig.cutoffYear || defaultYear, 10),
+                  Number.parseInt(feedConfig.cutoffMonth || defaultMonth, 10) -
+                    1,
+                  Number.parseInt(feedConfig.cutoffDay || defaultDay, 10),
                 );
                 cutoffDate.setHours(0, 0, 0, 0);
 

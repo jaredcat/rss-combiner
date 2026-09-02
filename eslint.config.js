@@ -1,9 +1,18 @@
 import eslint from '@eslint/js';
-import globals from 'globals';
+import { defineConfig } from 'eslint/config';
 import sonarjs from 'eslint-plugin-sonarjs';
+import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
-export default tseslint.config(
+const sharedRules = {
+  '@typescript-eslint/no-explicit-any': 'off',
+  '@typescript-eslint/no-unused-vars': [
+    'warn',
+    { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+  ],
+};
+
+export default defineConfig(
   {
     ignores: [
       'node_modules/**',
@@ -18,22 +27,30 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   sonarjs.configs.recommended,
   {
-    files: ['src/**/*.ts', 'scripts/**/*.ts'],
+    files: ['src/**/*.ts'],
     languageOptions: {
       ecmaVersion: 'latest',
       sourceType: 'module',
       globals: {
         ...globals.worker,
-        ...globals.node,
       },
     },
-    rules: {
-      '@typescript-eslint/no-explicit-any': 'off',
-      '@typescript-eslint/no-unused-vars': [
-        'warn',
-        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
-      ],
+    rules: sharedRules,
+  },
+  {
+    files: ['scripts/**/*.ts'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: {
+        ...globals.node,
+      },
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
     },
+    rules: sharedRules,
   },
   {
     files: ['src/admin.ts'],
@@ -41,12 +58,6 @@ export default tseslint.config(
       'sonarjs/cognitive-complexity': 'off',
       'sonarjs/no-duplicate-string': 'off',
       'sonarjs/no-identical-functions': 'off',
-    },
-  },
-  {
-    files: ['scripts/setup.ts'],
-    rules: {
-      'sonarjs/cognitive-complexity': 'off',
     },
   },
 );

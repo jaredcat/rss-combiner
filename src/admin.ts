@@ -126,7 +126,7 @@ export function adminFormHtml(
     flashClass = 'warn';
   }
 
-  return `<!DOCTYPE html>
+  return String.raw`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -350,7 +350,7 @@ export function adminFormHtml(
         row.querySelectorAll('[name^="feed_"]').forEach(function (el) {
           var n = el.getAttribute('name');
           if (!n) return;
-          var m = n.match(/^feed_\\d+_(.+)$/);
+          var m = n.match(/^feed_\d+_(.+)$/);
           if (m) el.setAttribute('name', 'feed_' + i + '_' + m[1]);
         });
         var ch = row.getAttribute('data-channel-title');
@@ -366,7 +366,7 @@ export function adminFormHtml(
 
     feedsContainer.addEventListener('input', function (ev) {
       var t = ev.target;
-      if (!t || !t.name || !/^feed_\\d+_url$/.test(t.name)) return;
+      if (!t || !t.name || !/^feed_\d+_url$/.test(t.name)) return;
       var row = t.closest && t.closest('[data-feed-row]');
       if (row) row.removeAttribute('data-channel-title');
       renumberFeedRows();
@@ -467,7 +467,7 @@ export function adminFormHtml(
       meta.appendChild(h3);
       if (chDesc) {
         var p = document.createElement('p');
-        p.textContent = chDesc.replace(/\\s+/g, ' ').slice(0, 280) + (chDesc.length > 280 ? '…' : '');
+        p.textContent = chDesc.replace(/\s+/g, ' ').slice(0, 280) + (chDesc.length > 280 ? '…' : '');
         meta.appendChild(p);
       }
       head.appendChild(meta);
@@ -510,7 +510,7 @@ export function adminFormHtml(
         if (desc) {
           var d = document.createElement('p');
           d.className = 'ep-desc';
-          d.textContent = desc.replace(/\\s+/g, ' ').slice(0, 220) + (desc.length > 220 ? '…' : '');
+          d.textContent = desc.replace(/\s+/g, ' ').slice(0, 220) + (desc.length > 220 ? '…' : '');
           body.appendChild(d);
         }
         ep.appendChild(body);

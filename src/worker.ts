@@ -8,6 +8,7 @@ import { adminFormHtml, loginHtml, type AdminPageContext } from './admin';
 import {
   CONFIG_KV_KEY,
   appConfigToStored,
+  formText,
   parseCoverMode,
   parseFeedsFromFormData,
   resolveConfig,
@@ -48,7 +49,7 @@ function timingSafeEqual(a: string, b: string): boolean {
   }
   let out = 0;
   for (let i = 0; i < a.length; i++) {
-    out |= a.charCodeAt(i) ^ b.charCodeAt(i);
+    out |= (a.codePointAt(i) ?? 0) ^ (b.codePointAt(i) ?? 0);
   }
   return out === 0;
 }
@@ -93,7 +94,7 @@ function resolveCoverPublicUrl(env: Env): string | null {
     return `${base.replace(/\/$/, '')}/cover.jpg`;
   }
   const feedImg = env.FEED_IMAGE_URL?.trim();
-  if (feedImg && feedImg.includes('.r2.dev')) {
+  if (feedImg?.includes('.r2.dev')) {
     try {
       const u = new URL(feedImg);
       if (u.hostname.endsWith('.r2.dev')) {
@@ -125,11 +126,11 @@ const COVER_ALLOWED_TYPES = new Set([
 ]);
 
 function appConfigFromFormData(form: FormData, env: Env): AppConfig {
-  const feedTitle = form.get('feedTitle')?.toString().trim() || '';
-  const feedImageUrl = form.get('feedImageUrl')?.toString().trim() || '';
-  const publicBaseUrl = form.get('publicBaseUrl')?.toString().trim() || '';
-  const coverMode = parseCoverMode(form.get('coverMode')?.toString());
-  const pad = parseInt(String(env.FEED_INDEX_PADDING || '2'), 10);
+  const feedTitle = formText(form, 'feedTitle');
+  const feedImageUrl = formText(form, 'feedImageUrl');
+  const publicBaseUrl = formText(form, 'publicBaseUrl');
+  const coverMode = parseCoverMode(formText(form, 'coverMode'));
+  const pad = Number.parseInt(String(env.FEED_INDEX_PADDING || '2'), 10);
 
   const feeds = parseFeedsFromFormData(form);
 
@@ -139,15 +140,15 @@ function appConfigFromFormData(form: FormData, env: Env): AppConfig {
     feedIndexPadding: Number.isFinite(pad) && pad >= 1 ? pad : 2,
     defaultCutoff: {
       day:
-        form.get('defaultCutoffDay')?.toString().trim() ||
+        formText(form, 'defaultCutoffDay') ||
         env.DEFAULT_CUTOFF_DATE_DAY ||
         '1',
       month:
-        form.get('defaultCutoffMonth')?.toString().trim() ||
+        formText(form, 'defaultCutoffMonth') ||
         env.DEFAULT_CUTOFF_DATE_MONTH ||
         '1',
       year:
-        form.get('defaultCutoffYear')?.toString().trim() ||
+        formText(form, 'defaultCutoffYear') ||
         env.DEFAULT_CUTOFF_DATE_YEAR ||
         '2024',
     },
@@ -165,345 +166,370 @@ async function generateXml(
   return XMLBuilder.fetchXml(config, options);
 }
 
+type RequestContext = {
+  url: URL;
+  secureCookie: boolean;
+};
+
+type RouteHandler = (
+  request: Request,
+  env: Env,
+  ctx: RequestContext,
+) => Promise<Response>;
+
+const HTML_CONTENT_TYPE = 'text/html; charset=utf-8';
+const JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
+
+function normalizePath(pathname: string): string {
+  return pathname.replace(/\/$/, '') || '/';
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function htmlResponse(body: string, status = 200): Response {
+  return new Response(body, {
+    status,
+    headers: { 'content-type': HTML_CONTENT_TYPE },
+  });
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': JSON_CONTENT_TYPE },
+  });
+}
+
+function jsonError(error: string, status: number): Response {
+  return jsonResponse({ ok: false, error }, status);
+}
+
+function redirect(location: string, cookie?: string): Response {
+  const headers: Record<string, string> = { Location: location };
+  if (cookie) {
+    headers['Set-Cookie'] = cookie;
+  }
+  return new Response(null, { status: 302, headers });
+}
+
+function adminAuthCookie(
+  token: string,
+  secure: boolean,
+  maxAge: number,
+): string {
+  const secureFlag = secure ? 'Secure; ' : '';
+  return `admin_auth=${token}; HttpOnly; ${secureFlag}SameSite=Lax; Max-Age=${maxAge}; Path=/`;
+}
+
+async function requireAdmin(
+  request: Request,
+  env: Env,
+  unauthorized: Response,
+): Promise<Response | undefined> {
+  if (!env.ADMIN_SECRET) {
+    return adminDisabledResponse();
+  }
+  if (!(await isAdminAuthenticated(request, env))) {
+    return unauthorized;
+  }
+}
+
+async function putPodcastsXml(env: Env, xml: string): Promise<void> {
+  await env.XML_BUCKET.put('podcasts.xml', xml, {
+    httpMetadata: { contentType: 'application/xml' },
+  });
+}
+
+async function regeneratePodcastsXmlQuiet(env: Env): Promise<void> {
+  try {
+    const xml = await generateXml(env, { quiet: true });
+    await putPodcastsXml(env, xml);
+  } catch (error) {
+    console.error('Regenerate after admin save failed:', error);
+  }
+}
+
+function formPassword(form: FormData): string {
+  const value = form.get('password');
+  return typeof value === 'string' ? value : '';
+}
+
+function parseCoverFile(
+  file: FormDataEntryValue | null,
+): { error: string } | { file: File } {
+  if (file == null || typeof file === 'string') {
+    return { error: 'Missing file' };
+  }
+  if (!COVER_ALLOWED_TYPES.has(file.type)) {
+    return { error: 'Use JPEG, PNG, WebP, or GIF.' };
+  }
+  if (file.size > COVER_UPLOAD_MAX_BYTES) {
+    return { error: 'File too large (max 5 MB).' };
+  }
+  return { file };
+}
+
+async function handleAdminLogin(
+  request: Request,
+  env: Env,
+  ctx: RequestContext,
+): Promise<Response> {
+  if (!env.ADMIN_SECRET) {
+    return adminDisabledResponse();
+  }
+  const password = formPassword(await request.formData());
+  if (!timingSafeEqual(password, env.ADMIN_SECRET)) {
+    return htmlResponse(loginHtml('Invalid password'), 401);
+  }
+  const token = await hexSha256(env.ADMIN_SECRET);
+  return redirect('/admin', adminAuthCookie(token, ctx.secureCookie, 86400));
+}
+
+async function handleAdminLogout(
+  _request: Request,
+  _env: Env,
+  ctx: RequestContext,
+): Promise<Response> {
+  return redirect('/admin', adminAuthCookie('', ctx.secureCookie, 0));
+}
+
+async function handleAdminPreview(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = await requireAdmin(
+    request,
+    env,
+    jsonError('Unauthorized', 401),
+  );
+  if (denied) {
+    return denied;
+  }
+
+  const form = await request.formData();
+  try {
+    const bypass = form.get('bypassFeedCache') === '1';
+    if (bypass) {
+      clearPreviewFeedMemoryCache();
+    }
+    const config = appConfigFromFormData(form, env);
+    const { xml, channelTitles } = await XMLBuilder.fetchXml(config, {
+      quiet: true,
+      cacheFeedBodies: !bypass,
+      includeFeedChannelTitles: true,
+    });
+    return jsonResponse({ ok: true, xml, channelTitles });
+  } catch (error) {
+    return jsonError(errorMessage(error, 'Preview failed'), 400);
+  }
+}
+
+async function handleUploadCover(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = await requireAdmin(
+    request,
+    env,
+    jsonError('Unauthorized', 401),
+  );
+  if (denied) {
+    return denied;
+  }
+
+  const feedImageUrl = resolveCoverPublicUrl(env);
+  if (!feedImageUrl) {
+    return jsonError(
+      'Set R2_PUBLIC_BASE_URL or FEED_IMAGE_URL to a *.r2.dev URL in wrangler [vars], then redeploy.',
+      400,
+    );
+  }
+
+  const parsed = parseCoverFile((await request.formData()).get('file'));
+  if ('error' in parsed) {
+    return jsonError(parsed.error, 400);
+  }
+
+  try {
+    await env.XML_BUCKET.put('cover.jpg', await parsed.file.arrayBuffer(), {
+      httpMetadata: { contentType: parsed.file.type },
+    });
+    return jsonResponse({ ok: true, feedImageUrl });
+  } catch (error) {
+    return jsonError(errorMessage(error, 'Upload failed'), 500);
+  }
+}
+
+async function handleAdminSave(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const denied = await requireAdmin(
+    request,
+    env,
+    htmlResponse(loginHtml('Sign in required'), 401),
+  );
+  if (denied) {
+    return denied;
+  }
+  if (!env.CONFIG_KV) {
+    return new Response('CONFIG_KV binding missing', { status: 500 });
+  }
+
+  const form = await request.formData();
+  try {
+    if (!formText(form, 'publicBaseUrl')) {
+      throw new Error('Public base URL is required');
+    }
+
+    const config = appConfigFromFormData(form, env);
+    await env.CONFIG_KV.put(
+      CONFIG_KV_KEY,
+      JSON.stringify(appConfigToStored(config)),
+    );
+    await regeneratePodcastsXmlQuiet(env);
+    return redirect('/admin?saved=1');
+  } catch (error) {
+    const current = await resolveConfig(env, env.CONFIG_KV);
+    return htmlResponse(
+      adminFormHtml(
+        current,
+        `Error: ${errorMessage(error, 'Invalid input')}`,
+        adminPageContext(request, env),
+      ),
+      400,
+    );
+  }
+}
+
+async function handleAdminGet(
+  request: Request,
+  env: Env,
+  ctx: RequestContext,
+): Promise<Response> {
+  const denied = await requireAdmin(request, env, htmlResponse(loginHtml()));
+  if (denied) {
+    return denied;
+  }
+  const config = await resolveConfig(env, env.CONFIG_KV);
+  const saved = ctx.url.searchParams.get('saved') === '1';
+  return htmlResponse(
+    adminFormHtml(
+      config,
+      saved ? 'Saved to KV.' : undefined,
+      adminPageContext(request, env),
+    ),
+  );
+}
+
+async function handleDeployTrigger(
+  _request: Request,
+  env: Env,
+): Promise<Response> {
+  try {
+    const xml = await generateXml(env, { quiet: false });
+    await putPodcastsXml(env, xml);
+    return new Response('XML generated successfully', { status: 200 });
+  } catch (error) {
+    return new Response(
+      `Failed to generate XML: ${errorMessage(error, 'Unknown error')}`,
+      { status: 500 },
+    );
+  }
+}
+
+async function handlePodcastsXml(
+  _request: Request,
+  env: Env,
+): Promise<Response> {
+  try {
+    const obj = await env.XML_BUCKET.get('podcasts.xml');
+    if (!obj) {
+      return new Response('File not found', { status: 404 });
+    }
+
+    return new Response(obj.body as unknown as BodyInit, {
+      headers: {
+        'content-type': 'application/xml',
+        'cache-control': 'public, max-age=3600', // 1 hours
+      },
+    });
+  } catch (error) {
+    console.error('Failed to serve podcasts.xml:', error);
+    return new Response('Internal Server Error', { status: 500 });
+  }
+}
+
+async function handleHealthcheck(
+  _request: Request,
+  env: Env,
+): Promise<Response> {
+  try {
+    const obj = await env.XML_BUCKET.head('podcasts.xml');
+    return jsonResponse({
+      status: 'healthy',
+      lastModified: obj?.uploaded,
+    });
+  } catch (error) {
+    return jsonResponse(
+      {
+        status: 'unhealthy',
+        error: errorMessage(error, 'Unknown error'),
+      },
+      500,
+    );
+  }
+}
+
+const METHOD_ROUTES: Record<string, RouteHandler> = {
+  'POST /admin/login': handleAdminLogin,
+  'POST /admin/logout': handleAdminLogout,
+  'POST /admin/preview': handleAdminPreview,
+  'POST /admin/upload-cover': handleUploadCover,
+  'POST /admin': handleAdminSave,
+  'GET /admin': handleAdminGet,
+};
+
+const PATH_ROUTES: Record<string, RouteHandler> = {
+  '/deploy-trigger': handleDeployTrigger,
+  '/': handlePodcastsXml,
+  '/podcasts.xml': handlePodcastsXml,
+  '/healthcheck': handleHealthcheck,
+};
+
+function getRouteHandler(method: string, path: string): RouteHandler | undefined {
+  const byMethod = METHOD_ROUTES[`${method} ${path}`];
+  if (byMethod) {
+    return byMethod;
+  }
+  return PATH_ROUTES[path];
+}
+
 export default {
-  async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext) {
+  async scheduled(event: ScheduledEvent, env: Env, _ctx: ExecutionContext) {
     try {
       const xml = await generateXml(env, { quiet: false });
-      await env.XML_BUCKET.put('podcasts.xml', xml, {
-        httpMetadata: {
-          contentType: 'application/xml',
-        },
-      });
+      await putPodcastsXml(env, xml);
       console.log('XML file updated successfully');
     } catch (error) {
       console.error('Error in scheduled task:', error);
     }
   },
 
-  // Admin + public routing lives in one handler; complexity is mostly sequential path checks.
-  // eslint-disable-next-line sonarjs/cognitive-complexity -- route table, not nested logic
   async fetch(request: Request, env: Env, _ctx: ExecutionContext) {
     const url = new URL(request.url);
-    const path = url.pathname.replace(/\/$/, '') || '/';
-    const secureCookie = url.protocol === 'https:';
-
-    // --- Admin routes ---
-    if (path === '/admin/login' && request.method === 'POST') {
-      if (!env.ADMIN_SECRET) {
-        return adminDisabledResponse();
-      }
-      const form = await request.formData();
-      const password = form.get('password')?.toString() ?? '';
-      if (timingSafeEqual(password, env.ADMIN_SECRET)) {
-        const token = await hexSha256(env.ADMIN_SECRET);
-        const sec = secureCookie ? 'Secure; ' : '';
-        return new Response(null, {
-          status: 302,
-          headers: {
-            Location: '/admin',
-            'Set-Cookie': `admin_auth=${token}; HttpOnly; ${sec}SameSite=Lax; Max-Age=86400; Path=/`,
-          },
-        });
-      }
-      return new Response(loginHtml('Invalid password'), {
-        status: 401,
-        headers: { 'content-type': 'text/html; charset=utf-8' },
-      });
+    const handler = getRouteHandler(
+      request.method,
+      normalizePath(url.pathname),
+    );
+    if (!handler) {
+      return new Response('Not found', { status: 404 });
     }
-
-    if (path === '/admin/logout' && request.method === 'POST') {
-      const sec = secureCookie ? 'Secure; ' : '';
-      return new Response(null, {
-        status: 302,
-        headers: {
-          Location: '/admin',
-          'Set-Cookie': `admin_auth=; HttpOnly; ${sec}SameSite=Lax; Max-Age=0; Path=/`,
-        },
-      });
-    }
-
-    if (path === '/admin/preview' && request.method === 'POST') {
-      if (!env.ADMIN_SECRET) {
-        return adminDisabledResponse();
-      }
-      if (!(await isAdminAuthenticated(request, env))) {
-        return new Response(
-          JSON.stringify({ ok: false, error: 'Unauthorized' }),
-          {
-            status: 401,
-            headers: { 'content-type': 'application/json; charset=utf-8' },
-          },
-        );
-      }
-
-      const form = await request.formData();
-      try {
-        const bypass = form.get('bypassFeedCache') === '1';
-        if (bypass) {
-          clearPreviewFeedMemoryCache();
-        }
-        const config = appConfigFromFormData(form, env);
-        const { xml, channelTitles } = await XMLBuilder.fetchXml(config, {
-          quiet: true,
-          cacheFeedBodies: !bypass,
-          includeFeedChannelTitles: true,
-        });
-        return new Response(JSON.stringify({ ok: true, xml, channelTitles }), {
-          headers: { 'content-type': 'application/json; charset=utf-8' },
-        });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : 'Preview failed';
-        return new Response(JSON.stringify({ ok: false, error: msg }), {
-          status: 400,
-          headers: { 'content-type': 'application/json; charset=utf-8' },
-        });
-      }
-    }
-
-    if (path === '/admin/upload-cover' && request.method === 'POST') {
-      if (!env.ADMIN_SECRET) {
-        return adminDisabledResponse();
-      }
-      if (!(await isAdminAuthenticated(request, env))) {
-        return new Response(
-          JSON.stringify({ ok: false, error: 'Unauthorized' }),
-          {
-            status: 401,
-            headers: { 'content-type': 'application/json; charset=utf-8' },
-          },
-        );
-      }
-
-      const feedImageUrl = resolveCoverPublicUrl(env);
-      if (!feedImageUrl) {
-        return new Response(
-          JSON.stringify({
-            ok: false,
-            error:
-              'Set R2_PUBLIC_BASE_URL or FEED_IMAGE_URL to a *.r2.dev URL in wrangler [vars], then redeploy.',
-          }),
-          {
-            status: 400,
-            headers: { 'content-type': 'application/json; charset=utf-8' },
-          },
-        );
-      }
-
-      const form = await request.formData();
-      const file = form.get('file');
-      if (!file || typeof file === 'string') {
-        return new Response(
-          JSON.stringify({ ok: false, error: 'Missing file' }),
-          {
-            status: 400,
-            headers: { 'content-type': 'application/json; charset=utf-8' },
-          },
-        );
-      }
-
-      const blob = file as File;
-      const type = blob.type || '';
-      if (!COVER_ALLOWED_TYPES.has(type)) {
-        return new Response(
-          JSON.stringify({
-            ok: false,
-            error: 'Use JPEG, PNG, WebP, or GIF.',
-          }),
-          {
-            status: 400,
-            headers: { 'content-type': 'application/json; charset=utf-8' },
-          },
-        );
-      }
-      if (blob.size > COVER_UPLOAD_MAX_BYTES) {
-        return new Response(
-          JSON.stringify({ ok: false, error: 'File too large (max 5 MB).' }),
-          {
-            status: 400,
-            headers: { 'content-type': 'application/json; charset=utf-8' },
-          },
-        );
-      }
-
-      try {
-        await env.XML_BUCKET.put('cover.jpg', await blob.arrayBuffer(), {
-          httpMetadata: { contentType: type },
-        });
-        return new Response(JSON.stringify({ ok: true, feedImageUrl }), {
-          headers: { 'content-type': 'application/json; charset=utf-8' },
-        });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : 'Upload failed';
-        return new Response(JSON.stringify({ ok: false, error: msg }), {
-          status: 500,
-          headers: { 'content-type': 'application/json; charset=utf-8' },
-        });
-      }
-    }
-
-    if (path === '/admin' && request.method === 'POST') {
-      if (!env.ADMIN_SECRET) {
-        return adminDisabledResponse();
-      }
-      if (!(await isAdminAuthenticated(request, env))) {
-        return new Response(loginHtml('Sign in required'), {
-          status: 401,
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-        });
-      }
-      if (!env.CONFIG_KV) {
-        return new Response('CONFIG_KV binding missing', { status: 500 });
-      }
-
-      const form = await request.formData();
-
-      try {
-        if (!form.get('publicBaseUrl')?.toString().trim()) {
-          throw new Error('Public base URL is required');
-        }
-
-        const config = appConfigFromFormData(form, env);
-
-        const stored = appConfigToStored(config);
-        await env.CONFIG_KV.put(CONFIG_KV_KEY, JSON.stringify(stored));
-
-        try {
-          const xml = await generateXml(env, { quiet: true });
-          await env.XML_BUCKET.put('podcasts.xml', xml, {
-            httpMetadata: { contentType: 'application/xml' },
-          });
-        } catch (e) {
-          console.error('Regenerate after admin save failed:', e);
-          const detail =
-            e instanceof Error ? e.message : 'Unknown regeneration error';
-          return new Response(
-            adminFormHtml(
-              config,
-              `Saved to KV, but feed regeneration failed: ${detail}. /podcasts.xml may still serve the previous feed until cron runs or you save again successfully.`,
-              adminPageContext(request, env),
-            ),
-            {
-              status: 502,
-              headers: { 'content-type': 'text/html; charset=utf-8' },
-            },
-          );
-        }
-
-        return new Response(null, {
-          status: 302,
-          headers: { Location: '/admin?saved=1' },
-        });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : 'Invalid input';
-        const current = await resolveConfig(env, env.CONFIG_KV);
-        return new Response(
-          adminFormHtml(
-            current,
-            `Error: ${msg}`,
-            adminPageContext(request, env),
-          ),
-          {
-            status: 400,
-            headers: { 'content-type': 'text/html; charset=utf-8' },
-          },
-        );
-      }
-    }
-
-    if (path === '/admin' && request.method === 'GET') {
-      if (!env.ADMIN_SECRET) {
-        return adminDisabledResponse();
-      }
-      if (!(await isAdminAuthenticated(request, env))) {
-        return new Response(loginHtml(), {
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-        });
-      }
-      const config = await resolveConfig(env, env.CONFIG_KV);
-      const saved = url.searchParams.get('saved') === '1';
-      return new Response(
-        adminFormHtml(
-          config,
-          saved ? 'Saved to KV.' : undefined,
-          adminPageContext(request, env),
-        ),
-        { headers: { 'content-type': 'text/html; charset=utf-8' } },
-      );
-    }
-
-    if (path === '/deploy-trigger') {
-      if (!env.ADMIN_SECRET) {
-        return adminDisabledResponse();
-      }
-      if (!(await isAdminAuthenticated(request, env))) {
-        return new Response(
-          'Unauthorized. Sign in at /admin or send Authorization: Bearer <ADMIN_SECRET>.',
-          { status: 401, headers: { 'content-type': 'text/plain; charset=utf-8' } },
-        );
-      }
-      try {
-        const xml = await generateXml(env, { quiet: false });
-        await env.XML_BUCKET.put('podcasts.xml', xml, {
-          httpMetadata: {
-            contentType: 'application/xml',
-          },
-        });
-        return new Response('XML generated successfully', { status: 200 });
-      } catch (error) {
-        return new Response(
-          `Failed to generate XML: ${
-            error instanceof Error ? error.message : 'Unknown error'
-          }`,
-          { status: 500 },
-        );
-      }
-    }
-
-    if (path === '/' || path === '/podcasts.xml') {
-      try {
-        const obj = await env.XML_BUCKET.get('podcasts.xml');
-        if (!obj) {
-          return new Response('File not found', { status: 404 });
-        }
-
-        return new Response(obj.body as unknown as BodyInit, {
-          headers: {
-            'content-type': 'application/xml',
-            'cache-control': 'public, max-age=3600', // 1 hours
-          },
-        });
-      } catch (error) {
-        console.error('Failed to serve podcasts.xml:', error);
-        return new Response('Internal Server Error', { status: 500 });
-      }
-    }
-
-    if (path === '/healthcheck') {
-      try {
-        const obj = await env.XML_BUCKET.head('podcasts.xml');
-        return new Response(
-          JSON.stringify({
-            status: 'healthy',
-            lastModified: obj?.uploaded,
-          }),
-          {
-            headers: { 'content-type': 'application/json' },
-          },
-        );
-      } catch (error) {
-        return new Response(
-          JSON.stringify({
-            status: 'unhealthy',
-            error: error instanceof Error ? error.message : 'Unknown error',
-          }),
-          {
-            status: 500,
-            headers: { 'content-type': 'application/json' },
-          },
-        );
-      }
-    }
-
-    return new Response('Not found', { status: 404 });
+    return handler(request, env, {
+      url,
+      secureCookie: url.protocol === 'https:',
+    });
   },
 };
