@@ -1,0 +1,4 @@
+# Copy to `.dev.vars` for `wrangler dev` (`.dev.vars` is gitignored).
+# Format: one KEY=value per line, no quotes needed for simple values.
+
+ADMIN_SECRET=set-a-password-for-the-ui

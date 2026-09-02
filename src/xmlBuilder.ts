@@ -1,6 +1,17 @@
 import { XMLParser } from 'fast-xml-parser';
 import RSS from 'rss';
-import type { Env } from './worker';
+import type { AppConfig, CoverMode } from './config';
+import { defaultFetchFeedText, getPreviewFeedText } from './feedFetch';
+
+/** RSS `pubDate` may be a string or `{ '#text': string }` from fast-xml-parser. */
+function normalizeRssText(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object' && value !== null && '#text' in value) {
+    return String((value as { '#text': unknown })['#text']);
+  }
+  return '';
+}
 
 type CustomItem = {
   title: string;
@@ -20,9 +31,9 @@ type CustomItem = {
   'itunes:duration'?: string;
   'itunes:image'?: string;
   'itunes:explicit'?: string;
-  'itunes:season': number;
-  'itunes:episode': number;
-  'itunes:episodeType': string;
+  'itunes:season'?: number;
+  'itunes:episode'?: number;
+  'itunes:episodeType'?: string;
   pubDateOriginal: string;
   sortDate: Date;
 };
@@ -33,14 +44,19 @@ async function parseFeed(
     cutoffYear?: string;
     yearCutoff?: number;
     defaultCutoffYear: number;
-    dateSync?: boolean;
+    mergeTimeline?: boolean;
   },
+  fetchFeedText: (url: string) => Promise<string>,
 ): Promise<{ title: string; items: CustomItem[]; image?: string }> {
-  const response = await fetch(url);
-  const text = await response.text();
+  const text = await fetchFeedText(url);
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '@_',
+    // Large podcast feeds (e.g. HTML in descriptions) can exceed the default 1000 entity expansions.
+    processEntities: {
+      maxTotalExpansions: 50_000,
+      maxExpandedLength: 5_000_000,
+    },
   });
   const result = parser.parse(text);
   const channel = result.rss.channel;
@@ -48,65 +64,72 @@ async function parseFeed(
   const today = new Date();
   today.setHours(23, 59, 59);
 
-  const items = (channel.item || [])
-    .map((item: any) => {
-      const originalDate = new Date(item.pubDate || '');
-      let sortDate = new Date(originalDate);
+  const rawItems = channel.item;
+  let itemList: any[] = [];
+  if (Array.isArray(rawItems)) {
+    itemList = rawItems;
+  } else if (rawItems) {
+    itemList = [rawItems];
+  }
 
-      // Add dateSync logic
-      if (feedConfig.dateSync) {
+  const items: CustomItem[] = itemList
+    .flatMap((item: any): CustomItem[] => {
+      const originalDate = new Date(normalizeRssText(item.pubDate));
+      const sortDate = new Date(originalDate);
+
+      // When mergeTimeline is on for this feed: shift years forward so an
+      // older per-feed cutoff year lines up with the default timeline
+      // (mixed chronological feed across shows).
+      if (feedConfig.mergeTimeline) {
         const pseudoNow = new Date();
         pseudoNow.setHours(23, 59, 59);
         pseudoNow.setDate(pseudoNow.getDate() + 1);
-        if (feedConfig.yearCutoff) {
-          pseudoNow.setFullYear(feedConfig.yearCutoff);
-        }
         if (sortDate.getTime() > pseudoNow.getTime()) {
-          return null;
+          return [];
+        }
+
+        if (
+          feedConfig.yearCutoff &&
+          feedConfig.yearCutoff < feedConfig.defaultCutoffYear
+        ) {
+          const yearDiff = feedConfig.defaultCutoffYear - feedConfig.yearCutoff;
+          sortDate.setFullYear(sortDate.getFullYear() + yearDiff);
         }
       }
 
-      // Adjust year if needed
-      if (
-        feedConfig.yearCutoff &&
-        feedConfig.yearCutoff < feedConfig.defaultCutoffYear
-      ) {
-        const yearDiff = feedConfig.defaultCutoffYear - feedConfig.yearCutoff;
-        sortDate.setFullYear(sortDate.getFullYear() + yearDiff);
-      }
-
-      // Skip future dates
+      // Skip future dates because this causes issues with some feed reader or podcast players that don't support future dates
       if (sortDate > today) {
-        return null;
+        return [];
       }
 
-      return {
-        title: item.title || '',
-        link: item.link || '',
-        guid: item.guid
-          ? {
-              value: item.guid['#text'] || item.guid,
-              isPermaLink: item.guid['@_isPermaLink'] === 'true',
-            }
-          : undefined,
-        description: item.description || '',
-        pubDate: sortDate.toUTCString(), // Use adjusted date
-        pubDateOriginal: originalDate.toUTCString(), // Keep original date
-        enclosure: item.enclosure
-          ? {
-              url: item.enclosure['@_url'] || '',
-              type: item.enclosure['@_type'] || '',
-              length: item.enclosure['@_length'] || '',
-            }
-          : undefined,
-        'itunes:duration': item['itunes:duration'] || '',
-        'itunes:image': item['itunes:image']?.['@_href'] || '',
-        'itunes:explicit': item['itunes:explicit'] || '',
-        'itunes:episodeType': item['itunes:episodeType'] || '',
-        sortDate,
-      };
+      return [
+        {
+          title: item.title || '',
+          link: item.link || '',
+          guid: item.guid
+            ? {
+                value: item.guid['#text'] || item.guid,
+                isPermaLink: item.guid['@_isPermaLink'] === 'true',
+              }
+            : undefined,
+          description: item.description || '',
+          pubDate: sortDate.toUTCString(), // Use adjusted date
+          pubDateOriginal: originalDate.toUTCString(), // Keep original date
+          enclosure: item.enclosure
+            ? {
+                url: item.enclosure['@_url'] || '',
+                type: item.enclosure['@_type'] || '',
+                length: item.enclosure['@_length'] || '',
+              }
+            : undefined,
+          'itunes:duration': item['itunes:duration'] || '',
+          'itunes:image': item['itunes:image']?.['@_href'] || '',
+          'itunes:explicit': item['itunes:explicit'] || '',
+          'itunes:episodeType': item['itunes:episodeType'] || '',
+          sortDate,
+        },
+      ];
     })
-    .filter(Boolean) // Remove null items
     .sort(
       (ep1: CustomItem, ep2: CustomItem) =>
         ep1.sortDate.getTime() - ep2.sortDate.getTime(),
@@ -119,23 +142,80 @@ async function parseFeed(
   };
 }
 
+function episodeItunesImageElements(
+  coverMode: CoverMode,
+  feedImageUrl: string | undefined,
+  itemItunesImage: string,
+  feedImage: string | undefined,
+): { 'itunes:image': { _attr: { href: string } } } | false {
+  if (coverMode === 'main') {
+    if (!feedImageUrl) {
+      return false;
+    }
+    return {
+      'itunes:image': { _attr: { href: feedImageUrl } },
+    };
+  }
+  if (coverMode === 'per_feed_main') {
+    if (!feedImage) {
+      return false;
+    }
+    return {
+      'itunes:image': { _attr: { href: feedImage } },
+    };
+  }
+  const href = itemItunesImage || feedImage;
+  if (!href) {
+    return false;
+  }
+  return {
+    'itunes:image': { _attr: { href } },
+  };
+}
+
 export class XMLBuilder {
   static async fetchXml(
-    env: Env,
-    options?: { quiet?: boolean },
-  ): Promise<string> {
+    config: AppConfig,
+    options: {
+      quiet?: boolean;
+      cacheFeedBodies?: boolean;
+      fetchFeedText?: (url: string) => Promise<string>;
+      includeFeedChannelTitles: true;
+    },
+  ): Promise<{ xml: string; channelTitles: string[] }>;
+  static async fetchXml(
+    config: AppConfig,
+    options?: {
+      quiet?: boolean;
+      /** When true (admin preview), reuse in-memory + edge-cached source RSS bodies. */
+      cacheFeedBodies?: boolean;
+      /** Override how feed XML is loaded (tests). */
+      fetchFeedText?: (url: string) => Promise<string>;
+      includeFeedChannelTitles?: false;
+    },
+  ): Promise<string>;
+  static async fetchXml(
+    config: AppConfig,
+    options?: {
+      quiet?: boolean;
+      cacheFeedBodies?: boolean;
+      fetchFeedText?: (url: string) => Promise<string>;
+      includeFeedChannelTitles?: boolean;
+    },
+  ): Promise<string | { xml: string; channelTitles: string[] }> {
     if (!options?.quiet) {
       console.log('Collecting feed configs...');
     }
-    const feedImageUrl = env.FEED_IMAGE_URL as string | undefined;
-    const feedTitle = env.FEED_TITLE as string | undefined;
+    const feedImageUrl = config.feedImageUrl;
+    const feedTitle = config.feedTitle;
+    const base = config.publicBaseUrl.replace(/\/$/, '');
+    const feedUrl = `${base}/podcasts.xml`;
 
     const feed = new RSS({
       title: feedTitle || 'My Combined Podcast Feed',
       description: 'A combined feed of all my favorite podcasts',
-      feed_url:
-        'https://your-worker-name.your-subdomain.workers.dev/podcasts.xml',
-      site_url: 'https://your-worker-name.your-subdomain.workers.dev',
+      feed_url: feedUrl,
+      site_url: base,
       generator: 'Cloudflare Worker RSS Combiner',
       language: 'en',
       ...(feedImageUrl && {
@@ -143,10 +223,12 @@ export class XMLBuilder {
         image: {
           url: feedImageUrl,
           title: feedTitle || 'My Combined Podcast Feed',
-          link: 'https://your-worker-name.your-subdomain.workers.dev',
+          link: base,
         },
       }),
       custom_namespaces: {
+        // Podcast namespace URIs are historically http:// (not fetch URLs).
+        // eslint-disable-next-line sonarjs/no-clear-text-protocols -- XML namespace identifiers
         itunes: 'http://www.itunes.com/dtds/podcast-1.0.dtd',
         content: 'http://purl.org/rss/1.0/modules/content/',
       },
@@ -161,75 +243,61 @@ export class XMLBuilder {
       ],
     });
 
-    // Get all feed URLs from environment variables
-    const feeds: {
-      url: string;
-      cutoffYear?: string;
-      cutoffMonth?: string;
-      cutoffDay?: string;
-      dateSync?: boolean;
-    }[] = [];
-    const padding = parseInt(env.FEED_INDEX_PADDING);
-
-    for (let i = 1; i <= 99; i++) {
-      const paddedIndex = i.toString().padStart(padding, '0');
-      const urlKey = `FEED_${paddedIndex}_URL`;
-
-      if (urlKey in env) {
-        if (!options?.quiet) {
-          console.log(`Found feed ${urlKey}:`, env[urlKey]);
-        }
-        feeds.push({
-          url: env[urlKey] as string,
-          cutoffYear: env[`FEED_${paddedIndex}_CUTOFF_YEAR`] as string,
-          cutoffMonth: env[`FEED_${paddedIndex}_CUTOFF_MONTH`] as string,
-          cutoffDay: env[`FEED_${paddedIndex}_CUTOFF_DAY`] as string,
-          dateSync: env[`FEED_${paddedIndex}_DATE_SYNC`] === 'true',
-        });
-      } else {
-        break;
-      }
-    }
+    const feeds = config.feeds;
+    const defaultYear = config.defaultCutoff.year;
+    const defaultMonth = config.defaultCutoff.month;
+    const defaultDay = config.defaultCutoff.day;
 
     if (!options?.quiet) {
       console.log(`Found ${feeds.length} feeds to process`);
     }
 
-    // Store all items to sort them together
+    const fetchFeedText =
+      options?.fetchFeedText ??
+      (options?.cacheFeedBodies ? getPreviewFeedText : defaultFetchFeedText);
+
     const allItems: {
       item: CustomItem;
       feedTitle: string;
       feedImage?: string;
     }[] = [];
 
+    const channelTitles: string[] = feeds.map(() => '');
+
     try {
       await Promise.all(
-        feeds.map(async (feedConfig) => {
+        feeds.map(async (feedConfig, feedIndex) => {
           try {
-            const parsedFeed = await parseFeed(feedConfig.url, {
-              yearCutoff: feedConfig.cutoffYear
-                ? parseInt(feedConfig.cutoffYear)
-                : undefined,
-              defaultCutoffYear: parseInt(env.DEFAULT_CUTOFF_DATE_YEAR),
-              dateSync: feedConfig.dateSync,
-            });
+            const parsedFeed = await parseFeed(
+              feedConfig.url,
+              {
+                yearCutoff: feedConfig.cutoffYear
+                  ? parseInt(feedConfig.cutoffYear, 10)
+                  : undefined,
+                defaultCutoffYear: parseInt(defaultYear, 10),
+                mergeTimeline: feedConfig.mergeTimeline,
+              },
+              fetchFeedText,
+            );
+
+            const chTitle =
+              typeof parsedFeed.title === 'string'
+                ? parsedFeed.title
+                : String(parsedFeed.title ?? '');
+            channelTitles[feedIndex] = chTitle.trim();
 
             parsedFeed.items.forEach((item) => {
               if (item.pubDate) {
                 const pubDate = new Date(item.pubDateOriginal || '');
                 const cutoffDate = new Date(
-                  parseInt(
-                    feedConfig.cutoffYear || env.DEFAULT_CUTOFF_DATE_YEAR,
-                  ),
-                  parseInt(
-                    feedConfig.cutoffMonth || env.DEFAULT_CUTOFF_DATE_MONTH,
-                  ) - 1,
-                  parseInt(feedConfig.cutoffDay || env.DEFAULT_CUTOFF_DATE_DAY),
+                  parseInt(feedConfig.cutoffYear || defaultYear, 10),
+                  parseInt(feedConfig.cutoffMonth || defaultMonth, 10) - 1,
+                  parseInt(feedConfig.cutoffDay || defaultDay, 10),
                 );
-                cutoffDate.setHours(0, 0, 0, 0); // Set to midnight
+                cutoffDate.setHours(0, 0, 0, 0);
 
                 if (cutoffDate >= pubDate) {
-                  return; // Skip this episode
+                  return;
                 }
                 allItems.push({
                   item,
@@ -239,31 +307,47 @@ export class XMLBuilder {
               }
             });
           } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
             throw new Error(
-              `Failed to process feed ${feedConfig.url}: ${error}`,
+              `Failed to process feed ${feedConfig.url}: ${message}`,
+              { cause: error },
             );
           }
         }),
       );
 
-      // Sort all items by date, oldest first
       allItems.sort(
         (a, b) => a.item.sortDate.getTime() - b.item.sortDate.getTime(),
       );
 
+      if (allItems.length === 0) {
+        const emptyXml = feed.xml({ indent: true });
+        if (options?.includeFeedChannelTitles) {
+          return { xml: emptyXml, channelTitles };
+        }
+        return emptyXml;
+      }
+
       let episode = 0;
       let season = 1;
       let currentSeasonMonth = new Date(allItems[0].item.pubDate).getUTCMonth();
-      allItems.forEach(({ item, feedTitle, feedImage }) => {
-        const itemTitle = `${item.title || ''} - ${feedTitle}`;
+      allItems.forEach(({ item, feedTitle: srcFeedTitle, feedImage }) => {
+        const itemTitle = `${item.title || ''} - ${srcFeedTitle}`;
         episode++;
 
-        // Use UTC methods for comparison
         const itemMonth = new Date(item.pubDate).getUTCMonth();
         if (itemMonth !== currentSeasonMonth) {
           season++;
           currentSeasonMonth = itemMonth;
         }
+
+        const imgEl = episodeItunesImageElements(
+          config.coverMode,
+          feedImageUrl,
+          item['itunes:image'] || '',
+          feedImage,
+        );
 
         feed.item({
           title: itemTitle,
@@ -281,11 +365,7 @@ export class XMLBuilder {
             { 'itunes:season': item['itunes:season'] || season },
             { 'itunes:episode': item['itunes:episode'] || episode },
             { pubDateOriginal: item.pubDateOriginal },
-            (item['itunes:image'] || feedImage) && {
-              'itunes:image': {
-                _attr: { href: item['itunes:image'] || feedImage },
-              },
-            },
+            imgEl,
           ].filter(Boolean),
         });
       });
@@ -294,6 +374,10 @@ export class XMLBuilder {
       throw error;
     }
 
-    return feed.xml({ indent: true });
+    const xmlOut = feed.xml({ indent: true });
+    if (options?.includeFeedChannelTitles) {
+      return { xml: xmlOut, channelTitles };
+    }
+    return xmlOut;
   }
 }

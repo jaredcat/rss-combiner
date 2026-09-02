@@ -35,7 +35,6 @@ async function uploadCover() {
   const wranglerContent = await fs.readFile('wrangler.toml', 'utf-8');
   const config = parse(wranglerContent);
   const bucketName = (config.r2_buckets as any)?.[0]?.bucket_name as string;
-  const workerName = config.name as string;
 
   if (!bucketName) {
     console.log('❌ No R2 bucket configured in wrangler.toml');

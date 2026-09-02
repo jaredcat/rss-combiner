@@ -57,6 +57,12 @@ Thank you for your interest in contributing to the RSS Combiner template! This g
    # Test feed generation
    bun run generate
 
+   # Lint (ESLint + typescript-eslint + SonarJS)
+   bun run lint
+
+   # Typecheck
+   bunx tsc --noEmit
+
    # Test worker locally
    bun run dev
 
@@ -78,6 +84,7 @@ Thank you for your interest in contributing to the RSS Combiner template! This g
 - Follow existing naming conventions
 - Add JSDoc comments for public functions
 - Keep functions focused and single-purpose
+- Run `bun run lint` before opening a PR (CI runs the same check)
 
 ## Areas for Contribution
 
