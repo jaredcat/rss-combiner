@@ -529,9 +529,12 @@ export function adminFormHtml(
     if (tabRendered) tabRendered.addEventListener('click', function () { showPanel('rendered'); });
     if (tabRaw) tabRaw.addEventListener('click', function () { showPanel('raw'); });
 
-    var t = null;
-    var delay = 450;
+    var debounceTimer = null;
+    // Heavy previews: wait for typing/edits to settle before hitting the Worker again.
+    var debounceMs = 1200;
     var previewSlice = 'newest';
+    var previewAbort = null;
+    var previewSeq = 0;
     var sliceNewestBtn = document.getElementById('preview-slice-newest');
     var sliceOldestBtn = document.getElementById('preview-slice-oldest');
     function setPreviewSlice(slice) {
@@ -554,22 +557,31 @@ export function adminFormHtml(
       });
     }
     function schedule() {
-      clearTimeout(t);
-      statusEl.textContent = 'Waiting…';
+      clearTimeout(debounceTimer);
+      statusEl.textContent = 'Waiting for edits to settle…';
       statusEl.className = 'hint';
-      t = setTimeout(function () { runPreview(false); }, delay);
+      debounceTimer = setTimeout(function () { runPreview(false); }, debounceMs);
     }
     async function runPreview(bypassCache) {
+      clearTimeout(debounceTimer);
+      if (previewAbort) {
+        try { previewAbort.abort(); } catch (e) {}
+      }
+      var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      previewAbort = controller;
+      var seq = ++previewSeq;
       statusEl.textContent = bypassCache ? 'Re-fetching all source feeds…' : 'Fetching feeds & generating XML…';
       statusEl.className = 'hint';
-      xmlEl.textContent = '';
-      renderedEl.textContent = '';
       try {
         var fd = new FormData(form);
         if (bypassCache) fd.set('bypassFeedCache', '1');
         fd.set('previewSlice', previewSlice);
-        var r = await fetch('/admin/preview', { method: 'POST', body: fd, credentials: 'same-origin' });
+        var fetchOpts = { method: 'POST', body: fd, credentials: 'same-origin' };
+        if (controller) fetchOpts.signal = controller.signal;
+        var r = await fetch('/admin/preview', fetchOpts);
+        if (seq !== previewSeq) return;
         var rawText = await r.text();
+        if (seq !== previewSeq) return;
         var j;
         try {
           j = JSON.parse(rawText);
@@ -596,6 +608,7 @@ export function adminFormHtml(
         if (!r.ok || !j.ok) {
           throw new Error(j.error || r.statusText || 'Preview failed');
         }
+        if (seq !== previewSeq) return;
         xmlEl.textContent = j.xml;
         renderRssPreview(j.xml);
         if (j.channelTitles && j.channelTitles.length) {
@@ -626,6 +639,10 @@ export function adminFormHtml(
         }
         statusEl.className = 'hint';
       } catch (e) {
+        if (seq !== previewSeq) return;
+        if (e && (e.name === 'AbortError' || e.message === 'The user aborted a request.')) {
+          return;
+        }
         statusEl.textContent = 'Error: ' + (e && e.message ? e.message : String(e));
         statusEl.className = 'hint err';
       }
