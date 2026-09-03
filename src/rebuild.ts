@@ -21,8 +21,15 @@ export const REBUILD_MAX_RETRIES = 5;
 /** Pointer to the active job id only — written solely by `startRebuild`. */
 export const REBUILD_CURRENT_KV_KEY = 'rebuild:v1';
 
+/** Last job whose output was successfully promoted to `podcasts.xml`. */
+export const REBUILD_PUBLISHED_KV_KEY = 'rebuild:published';
+
 function jobStatusKey(jobId: string): string {
   return `rebuild:job:${jobId}`;
+}
+
+function jobOutputKey(jobId: string): string {
+  return `rebuild/${jobId}/podcasts.xml`;
 }
 
 export type RebuildJobStatus = 'queued' | 'running' | 'ready' | 'failed';
@@ -118,13 +125,88 @@ async function requireCurrentJob(
   return current;
 }
 
-async function deleteJobShards(env: RebuildEnv, jobId: string): Promise<void> {
+async function getPublishedJobId(env: RebuildEnv): Promise<string | null> {
+  if (!env.CONFIG_KV) {
+    return null;
+  }
+  const raw = await env.CONFIG_KV.get(REBUILD_PUBLISHED_KV_KEY);
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as { jobId?: string };
+    return typeof parsed.jobId === 'string' ? parsed.jobId : null;
+  } catch {
+    return null;
+  }
+}
+
+async function setPublishedJobId(
+  env: RebuildEnv,
+  jobId: string | null,
+): Promise<void> {
+  if (!env.CONFIG_KV) {
+    throw new Error('CONFIG_KV binding missing');
+  }
+  if (jobId == null) {
+    await env.CONFIG_KV.delete(REBUILD_PUBLISHED_KV_KEY);
+    return;
+  }
+  await env.CONFIG_KV.put(
+    REBUILD_PUBLISHED_KV_KEY,
+    JSON.stringify({ jobId }),
+  );
+}
+
+const XML_HTTP_METADATA = { contentType: 'application/xml' } as const;
+
+/** Copy a job-scoped feed artifact to the public `podcasts.xml` key. */
+async function promoteJobOutput(
+  env: RebuildEnv,
+  jobId: string,
+): Promise<boolean> {
+  const obj = await env.XML_BUCKET.get(jobOutputKey(jobId));
+  if (!obj) {
+    return false;
+  }
+  await env.XML_BUCKET.put('podcasts.xml', obj.body, {
+    httpMetadata: XML_HTTP_METADATA,
+  });
+  return true;
+}
+
+/**
+ * If we published while superseded, restore the last successfully published
+ * job's artifact (and published pointer) so a failed newer rebuild does not
+ * leave stale XML from this finalizer.
+ */
+async function restorePublishedFeed(
+  env: RebuildEnv,
+  previousPublishedJobId: string | null,
+): Promise<void> {
+  if (!previousPublishedJobId) {
+    return;
+  }
+  const restored = await promoteJobOutput(env, previousPublishedJobId);
+  if (!restored) {
+    console.error(
+      `Could not restore podcasts.xml from published job ${previousPublishedJobId}`,
+    );
+    return;
+  }
+  await setPublishedJobId(env, previousPublishedJobId);
+}
+
+/** Delete per-feed JSON shards; keep `rebuild/{jobId}/podcasts.xml` for rollback. */
+async function deleteFeedShards(env: RebuildEnv, jobId: string): Promise<void> {
   const prefix = shardPrefix(jobId);
   let cursor: string | undefined;
   for (;;) {
     const listed = await env.XML_BUCKET.list({ prefix, cursor, limit: 1000 });
     await Promise.all(
-      listed.objects.map((obj) => env.XML_BUCKET.delete(obj.key)),
+      listed.objects
+        .filter((obj) => obj.key.endsWith('.json'))
+        .map((obj) => env.XML_BUCKET.delete(obj.key)),
     );
     if (!listed.truncated) {
       break;
@@ -225,25 +307,13 @@ async function processFeed(
   }
 }
 
-async function finalize(env: RebuildEnv, jobId: string): Promise<void> {
-  const current = await requireCurrentJob(env, jobId);
-  if (!current) {
-    return;
-  }
-  // Idempotent: xml + ready already done; shard cleanup may have been interrupted.
-  if (current.status === 'ready') {
-    try {
-      await deleteJobShards(env, jobId);
-    } catch (error) {
-      console.error('Rebuild shard cleanup (idempotent) failed:', error);
-    }
-    return;
-  }
-
-  const config = await resolveConfig(env as Env, env.CONFIG_KV);
+async function loadJobEpisodes(
+  env: RebuildEnv,
+  jobId: string,
+  feedCount: number,
+): Promise<SerializedMergedEpisode[]> {
   const allSerialized: SerializedMergedEpisode[] = [];
-
-  for (let i = 0; i < config.feeds.length; i++) {
+  for (let i = 0; i < feedCount; i++) {
     const obj = await env.XML_BUCKET.get(shardKey(jobId, i));
     if (!obj) {
       throw new Error(`Missing rebuild shard for feed index ${i}`);
@@ -254,24 +324,95 @@ async function finalize(env: RebuildEnv, jobId: string): Promise<void> {
     }
     allSerialized.push(...parsed);
   }
+  return allSerialized;
+}
 
-  const episodes = deserializeMergedEpisodes(allSerialized);
-  const xml = buildPodcastsXml(config, episodes);
-
-  // Recheck ownership immediately before publishing — a newer Save/cron may have
-  // started while we were loading shards / building XML.
-  if (!(await requireCurrentJob(env, jobId))) {
-    return;
-  }
-  await env.XML_BUCKET.put('podcasts.xml', xml, {
-    httpMetadata: { contentType: 'application/xml' },
+/**
+ * Promote staged job output to public `podcasts.xml`, rolling back if we lose
+ * ownership mid-publish. Returns true when this job remains current and published.
+ */
+async function publishJobFeed(
+  env: RebuildEnv,
+  jobId: string,
+  xml: string,
+): Promise<boolean> {
+  await env.XML_BUCKET.put(jobOutputKey(jobId), xml, {
+    httpMetadata: XML_HTTP_METADATA,
   });
 
-  // Mark ready before deleting shards so a crash/retry still has shards (or
-  // short-circuits on ready) instead of failing with "missing shard".
   if (!(await requireCurrentJob(env, jobId))) {
+    return false;
+  }
+
+  const previousPublishedJobId = await getPublishedJobId(env);
+  await env.XML_BUCKET.put('podcasts.xml', xml, {
+    httpMetadata: XML_HTTP_METADATA,
+  });
+
+  if (!(await requireCurrentJob(env, jobId))) {
+    await restorePublishedFeed(env, previousPublishedJobId);
+    return false;
+  }
+
+  await setPublishedJobId(env, jobId);
+
+  if (!(await requireCurrentJob(env, jobId))) {
+    await restorePublishedFeed(env, previousPublishedJobId);
+    return false;
+  }
+
+  return true;
+}
+
+async function finishReadyCleanup(env: RebuildEnv, jobId: string): Promise<void> {
+  try {
+    await deleteFeedShards(env, jobId);
+  } catch (error) {
+    console.error('Rebuild shard cleanup failed (feed is ready):', error);
+  }
+}
+
+/** Idempotent path when job status is already ready. */
+async function finalizeAlreadyReady(
+  env: RebuildEnv,
+  jobId: string,
+): Promise<void> {
+  if (await requireCurrentJob(env, jobId)) {
+    const previousPublishedJobId = await getPublishedJobId(env);
+    if (previousPublishedJobId !== jobId) {
+      const promoted = await promoteJobOutput(env, jobId);
+      if (promoted && (await requireCurrentJob(env, jobId))) {
+        await setPublishedJobId(env, jobId);
+      } else if (!(await requireCurrentJob(env, jobId))) {
+        await restorePublishedFeed(env, previousPublishedJobId);
+      }
+    }
+  }
+  await finishReadyCleanup(env, jobId);
+}
+
+async function finalize(env: RebuildEnv, jobId: string): Promise<void> {
+  const current = await requireCurrentJob(env, jobId);
+  if (!current) {
     return;
   }
+  if (current.status === 'ready') {
+    await finalizeAlreadyReady(env, jobId);
+    return;
+  }
+
+  const config = await resolveConfig(env as Env, env.CONFIG_KV);
+  const allSerialized = await loadJobEpisodes(env, jobId, config.feeds.length);
+  const xml = buildPodcastsXml(
+    config,
+    deserializeMergedEpisodes(allSerialized),
+  );
+
+  const published = await publishJobFeed(env, jobId, xml);
+  if (!published) {
+    return;
+  }
+
   await putJobStatus(env, {
     jobId,
     status: 'ready',
@@ -280,11 +421,7 @@ async function finalize(env: RebuildEnv, jobId: string): Promise<void> {
     updatedAt: new Date().toISOString(),
   });
 
-  try {
-    await deleteJobShards(env, jobId);
-  } catch (error) {
-    console.error('Rebuild shard cleanup failed (feed is ready):', error);
-  }
+  await finishReadyCleanup(env, jobId);
 }
 
 async function markFailed(
