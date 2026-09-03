@@ -209,22 +209,6 @@ async function mirrorPublicPodcastsXml(
   }
 }
 
-/**
- * If we claimed `rebuild:published` and then lost current-job ownership, revert
- * the pointer only — never rewrite R2 (that races with newer finalizers).
- */
-async function revertPublishedPointerIfOwned(
-  env: RebuildEnv,
-  ourJobId: string,
-  previousPublishedJobId: string | null,
-): Promise<void> {
-  const publishedNow = await getPublishedJobId(env);
-  if (publishedNow !== ourJobId) {
-    return;
-  }
-  await setPublishedJobId(env, previousPublishedJobId);
-}
-
 /** Delete per-feed JSON shards; keep `rebuild/{jobId}/podcasts.xml` as the live artifact. */
 async function deleteFeedShards(env: RebuildEnv, jobId: string): Promise<void> {
   const prefix = shardPrefix(jobId);
@@ -357,8 +341,9 @@ async function loadJobEpisodes(
 
 /**
  * Commit this job's staged output as the live feed via `rebuild:published`.
- * Never rolls back R2 — superseded callers only revert the KV pointer if they
- * still own it. `podcasts.xml` is a non-authoritative mirror.
+ * Once claimed, the pointer is never rolled back — KV has no CAS, so a revert
+ * can clobber a newer finalizer's publish. A later successful job overwrites it.
+ * `podcasts.xml` remains a non-authoritative mirror.
  */
 async function publishJobFeed(
   env: RebuildEnv,
@@ -373,21 +358,8 @@ async function publishJobFeed(
     return false;
   }
 
-  const previousPublishedJobId = await getPublishedJobId(env);
   await setPublishedJobId(env, jobId);
-
-  if (!(await requireCurrentJob(env, jobId))) {
-    await revertPublishedPointerIfOwned(env, jobId, previousPublishedJobId);
-    return false;
-  }
-
   await mirrorPublicPodcastsXml(env, xml);
-
-  if (!(await requireCurrentJob(env, jobId))) {
-    await revertPublishedPointerIfOwned(env, jobId, previousPublishedJobId);
-    return false;
-  }
-
   return true;
 }
 
@@ -404,8 +376,10 @@ async function claimPublishedIfCurrent(
   env: RebuildEnv,
   jobId: string,
 ): Promise<void> {
-  const previousPublishedJobId = await getPublishedJobId(env);
-  if (previousPublishedJobId === jobId) {
+  if (!(await requireCurrentJob(env, jobId))) {
+    return;
+  }
+  if ((await getPublishedJobId(env)) === jobId) {
     return;
   }
   const staged = await env.XML_BUCKET.head(jobOutputKey(jobId));
@@ -413,10 +387,6 @@ async function claimPublishedIfCurrent(
     return;
   }
   await setPublishedJobId(env, jobId);
-  if (!(await requireCurrentJob(env, jobId))) {
-    await revertPublishedPointerIfOwned(env, jobId, previousPublishedJobId);
-    return;
-  }
   const body = await env.XML_BUCKET.get(jobOutputKey(jobId));
   if (body) {
     await mirrorPublicPodcastsXml(env, await body.text());
