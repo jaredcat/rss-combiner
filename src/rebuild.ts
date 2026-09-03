@@ -18,7 +18,12 @@ import {
 /** Must match `max_retries` on the queue consumer in wrangler.toml. */
 export const REBUILD_MAX_RETRIES = 5;
 
-export const REBUILD_STATUS_KV_KEY = 'rebuild:v1';
+/** Pointer to the active job id only — written solely by `startRebuild`. */
+export const REBUILD_CURRENT_KV_KEY = 'rebuild:v1';
+
+function jobStatusKey(jobId: string): string {
+  return `rebuild:job:${jobId}`;
+}
 
 export type RebuildJobStatus = 'queued' | 'running' | 'ready' | 'failed';
 
@@ -49,28 +54,54 @@ function shardPrefix(jobId: string): string {
   return `rebuild/${jobId}/`;
 }
 
-async function putRebuildStatus(
+function parseStatus(raw: string | null): RebuildStatus | null {
+  if (!raw) {
+    return null;
+  }
+  try {
+    return JSON.parse(raw) as RebuildStatus;
+  } catch {
+    return null;
+  }
+}
+
+async function putJobStatus(
   env: RebuildEnv,
   status: RebuildStatus,
 ): Promise<void> {
   if (!env.CONFIG_KV) {
     throw new Error('CONFIG_KV binding missing');
   }
-  await env.CONFIG_KV.put(REBUILD_STATUS_KV_KEY, JSON.stringify(status));
+  await env.CONFIG_KV.put(jobStatusKey(status.jobId), JSON.stringify(status));
 }
 
+/**
+ * Read the active rebuild status via the current-job pointer, then the job record.
+ * Job workers never write the pointer — only `startRebuild` does — so a superseded
+ * worker updating its own job record cannot overwrite a newer job's status.
+ */
 export async function getRebuildStatus(
   env: RebuildEnv,
 ): Promise<RebuildStatus | null> {
   if (!env.CONFIG_KV) {
     return null;
   }
-  const raw = await env.CONFIG_KV.get(REBUILD_STATUS_KV_KEY);
-  if (!raw) {
+  const pointerRaw = await env.CONFIG_KV.get(REBUILD_CURRENT_KV_KEY);
+  if (!pointerRaw) {
     return null;
   }
   try {
-    return JSON.parse(raw) as RebuildStatus;
+    const pointer = JSON.parse(pointerRaw) as { jobId?: string } | RebuildStatus;
+    if (!pointer || typeof pointer !== 'object' || typeof pointer.jobId !== 'string') {
+      return null;
+    }
+    // Prefer per-job record; fall back to legacy single-key payload for one deploy.
+    const jobRaw = await env.CONFIG_KV.get(jobStatusKey(pointer.jobId));
+    const fromJob = parseStatus(jobRaw);
+    if (fromJob) {
+      return fromJob;
+    }
+    return parseStatus(pointerRaw);
   } catch {
     return null;
   }
@@ -103,8 +134,7 @@ async function deleteJobShards(env: RebuildEnv, jobId: string): Promise<void> {
 }
 
 /**
- * Start a new rebuild job: write KV status and enqueue the first feed
- * (or finalize immediately when there are no feeds).
+ * Start a new rebuild job: write job status + current pointer, then enqueue.
  */
 export async function startRebuild(env: RebuildEnv): Promise<RebuildStatus> {
   if (!env.CONFIG_KV) {
@@ -124,7 +154,12 @@ export async function startRebuild(env: RebuildEnv): Promise<RebuildStatus> {
     feedIndex: 0,
     updatedAt: new Date().toISOString(),
   };
-  await putRebuildStatus(env, status);
+  await putJobStatus(env, status);
+  // Pointer last so readers never see a new id without a job record.
+  await env.CONFIG_KV.put(
+    REBUILD_CURRENT_KV_KEY,
+    JSON.stringify({ jobId }),
+  );
 
   if (totalFeeds === 0) {
     await env.REBUILD_QUEUE.send({ type: 'finalize', jobId });
@@ -144,8 +179,7 @@ async function processFeed(
   jobId: string,
   feedIndex: number,
 ): Promise<void> {
-  const current = await requireCurrentJob(env, jobId);
-  if (!current) {
+  if (!(await requireCurrentJob(env, jobId))) {
     return;
   }
 
@@ -156,12 +190,16 @@ async function processFeed(
     );
   }
 
-  await putRebuildStatus(env, {
-    ...current,
+  // Only touch this job's record — never the current pointer.
+  if (!(await requireCurrentJob(env, jobId))) {
+    return;
+  }
+  await putJobStatus(env, {
+    jobId,
     status: 'running',
+    totalFeeds: config.feeds.length,
     feedIndex,
     updatedAt: new Date().toISOString(),
-    error: undefined,
   });
 
   const feedConfig = config.feeds[feedIndex];
@@ -170,6 +208,10 @@ async function processFeed(
   await env.XML_BUCKET.put(shardKey(jobId, feedIndex), JSON.stringify(payload), {
     httpMetadata: { contentType: 'application/json' },
   });
+
+  if (!(await requireCurrentJob(env, jobId))) {
+    return;
+  }
 
   const nextIndex = feedIndex + 1;
   if (nextIndex >= config.feeds.length) {
@@ -186,6 +228,15 @@ async function processFeed(
 async function finalize(env: RebuildEnv, jobId: string): Promise<void> {
   const current = await requireCurrentJob(env, jobId);
   if (!current) {
+    return;
+  }
+  // Idempotent: xml + ready already done; shard cleanup may have been interrupted.
+  if (current.status === 'ready') {
+    try {
+      await deleteJobShards(env, jobId);
+    } catch (error) {
+      console.error('Rebuild shard cleanup (idempotent) failed:', error);
+    }
     return;
   }
 
@@ -209,15 +260,25 @@ async function finalize(env: RebuildEnv, jobId: string): Promise<void> {
   await env.XML_BUCKET.put('podcasts.xml', xml, {
     httpMetadata: { contentType: 'application/xml' },
   });
-  await deleteJobShards(env, jobId);
 
-  await putRebuildStatus(env, {
-    ...current,
+  // Mark ready before deleting shards so a crash/retry still has shards (or
+  // short-circuits on ready) instead of failing with "missing shard".
+  if (!(await requireCurrentJob(env, jobId))) {
+    return;
+  }
+  await putJobStatus(env, {
+    jobId,
     status: 'ready',
+    totalFeeds: config.feeds.length,
     feedIndex: config.feeds.length,
     updatedAt: new Date().toISOString(),
-    error: undefined,
   });
+
+  try {
+    await deleteJobShards(env, jobId);
+  } catch (error) {
+    console.error('Rebuild shard cleanup failed (feed is ready):', error);
+  }
 }
 
 async function markFailed(
@@ -230,7 +291,7 @@ async function markFailed(
     return;
   }
   const message = error instanceof Error ? error.message : String(error);
-  await putRebuildStatus(env, {
+  await putJobStatus(env, {
     ...current,
     status: 'failed',
     updatedAt: new Date().toISOString(),

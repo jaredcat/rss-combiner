@@ -140,7 +140,10 @@ async function ensureQueue(
   await createQueue(accountId, token, queueName);
 }
 
-/** Sync producer + consumer `queue = "..."` lines to the derived name. */
+/**
+ * Sync only the REBUILD_QUEUE producer `queue = "..."` and any consumer that
+ * already points at that same queue name. Leaves other queue bindings alone.
+ */
 function patchWranglerQueueNames(content: string, queueName: string): string {
   if (!content.includes('[[queues.producers]]')) {
     console.error('wrangler.toml is missing [[queues.producers]]; refusing to patch.');
@@ -150,17 +153,50 @@ function patchWranglerQueueNames(content: string, queueName: string): string {
     console.error('wrangler.toml is missing [[queues.consumers]]; refusing to patch.');
     process.exit(1);
   }
-  let count = 0;
-  const patched = content.replace(/^queue\s*=\s*"[^"]*"/gm, () => {
-    count += 1;
-    return `queue = "${queueName}"`;
-  });
-  if (count < 2) {
+
+  const producerBlockRe =
+    /\[\[queues\.producers\]\][^[]*?binding\s*=\s*"REBUILD_QUEUE"[^[]*/s;
+  const producerMatch = producerBlockRe.exec(content);
+  if (!producerMatch) {
     console.error(
-      `Expected at least 2 queue = "..." lines in wrangler.toml, found ${count}`,
+      'wrangler.toml is missing [[queues.producers]] with binding = "REBUILD_QUEUE"',
     );
     process.exit(1);
   }
+
+  const producerBlock = producerMatch[0];
+  const oldQueueMatch = /^queue\s*=\s*"([^"]*)"/m.exec(producerBlock);
+  if (!oldQueueMatch) {
+    console.error(
+      'REBUILD_QUEUE producer block is missing a queue = "..." line',
+    );
+    process.exit(1);
+  }
+  const oldQueueName = oldQueueMatch[1];
+
+  let patched = content.replace(producerBlockRe, (block) =>
+    block.replace(/^queue\s*=\s*"[^"]*"/m, `queue = "${queueName}"`),
+  );
+
+  // Update consumers that still reference the previous rebuild queue name only.
+  const consumerBlockRe = /\[\[queues\.consumers\]\][^[]*/g;
+  let consumerPatches = 0;
+  patched = patched.replace(consumerBlockRe, (block) => {
+    const q = /^queue\s*=\s*"([^"]*)"/m.exec(block);
+    if (!q || (q[1] !== oldQueueName && q[1] !== queueName)) {
+      return block;
+    }
+    consumerPatches += 1;
+    return block.replace(/^queue\s*=\s*"[^"]*"/m, `queue = "${queueName}"`);
+  });
+
+  if (consumerPatches < 1) {
+    console.error(
+      `Expected a [[queues.consumers]] block for queue "${oldQueueName}" (REBUILD_QUEUE); found none.`,
+    );
+    process.exit(1);
+  }
+
   return patched;
 }
 
