@@ -169,6 +169,7 @@ async function generateXml(
 type RequestContext = {
   url: URL;
   secureCookie: boolean;
+  executionCtx: ExecutionContext;
 };
 
 type RouteHandler = (
@@ -246,8 +247,9 @@ async function regeneratePodcastsXmlQuiet(env: Env): Promise<void> {
   try {
     const xml = await generateXml(env, { quiet: true });
     await putPodcastsXml(env, xml);
+    console.log('Background podcasts.xml regenerate finished');
   } catch (error) {
-    console.error('Regenerate after admin save failed:', error);
+    console.error('Background podcasts.xml regenerate failed:', error);
   }
 }
 
@@ -381,6 +383,7 @@ async function handleUploadCover(
 async function handleAdminSave(
   request: Request,
   env: Env,
+  ctx: RequestContext,
 ): Promise<Response> {
   const denied = await requireAdmin(
     request,
@@ -405,7 +408,9 @@ async function handleAdminSave(
       CONFIG_KV_KEY,
       JSON.stringify(appConfigToStored(config)),
     );
-    await regeneratePodcastsXmlQuiet(env);
+    // Full rebuild can exceed fetch CPU limits (Error 1102). Return after KV
+    // write and finish R2 in the background; hourly cron is the fallback.
+    ctx.executionCtx.waitUntil(regeneratePodcastsXmlQuiet(env));
     return redirect('/admin?saved=1');
   } catch (error) {
     const current = await resolveConfig(env, env.CONFIG_KV);
@@ -434,7 +439,9 @@ async function handleAdminGet(
   return htmlResponse(
     adminFormHtml(
       config,
-      saved ? 'Saved to KV.' : undefined,
+      saved
+        ? 'Saved to KV. Rebuilding /podcasts.xml in the background (may take a minute on large feeds).'
+        : undefined,
       adminPageContext(request, env),
     ),
   );
@@ -534,7 +541,7 @@ export default {
     }
   },
 
-  async fetch(request: Request, env: Env, _ctx: ExecutionContext) {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const url = new URL(request.url);
     const handler = getRouteHandler(
       request.method,
@@ -546,6 +553,7 @@ export default {
     return handler(request, env, {
       url,
       secureCookie: url.protocol === 'https:',
+      executionCtx: ctx,
     });
   },
 };

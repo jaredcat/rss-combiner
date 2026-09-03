@@ -301,7 +301,7 @@ export function adminFormHtml(
   <form method="post" action="/admin/logout" style="margin-top:0.75rem">
     <button type="submit" class="btn-ghost">Sign out</button>
   </form>
-  <p class="hint" style="margin-top:0.75rem">Saving updates <code>/podcasts.xml</code> right away. The hourly cron also refreshes the feed; use authenticated <code>/deploy-trigger</code> (Bearer token or admin cookie) for a manual rebuild.</p>
+  <p class="hint" style="margin-top:0.75rem">Saving writes settings to KV and starts a background rebuild of <code>/podcasts.xml</code> (large feeds can take a bit). Hourly cron also refreshes; use authenticated <code>/deploy-trigger</code> for a manual rebuild.</p>
   </div>
   <div class="panel" id="preview-wrap">
     <div class="panel-card">
