@@ -577,10 +577,20 @@ export function adminFormHtml(
           if (r.status === 401) {
             throw new Error('Session expired — refresh the page');
           }
-          var snippet = (rawText || '').replace(/\s+/g, ' ').slice(0, 160);
+          var looksLikeCfHtml =
+            /<!DOCTYPE html/i.test(rawText || '') ||
+            /no-js ie6 oldie/i.test(rawText || '');
+          if (r.status === 503 || r.status === 1102 || looksLikeCfHtml) {
+            throw new Error(
+              'Preview hit Cloudflare Worker resource limits (HTTP ' +
+              r.status +
+              '). Save still works; try fewer feeds, a newer cutoff, or wait and retry.'
+            );
+          }
+          var snippet = (rawText || '').replace(/\s+/g, ' ').slice(0, 120);
           throw new Error(
             'Invalid response from server (HTTP ' + r.status + ')' +
-            (snippet ? ': ' + snippet : ' — often means the Worker hit resource limits on a very large feed')
+            (snippet ? ': ' + snippet : '')
           );
         }
         if (!r.ok || !j.ok) {

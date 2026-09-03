@@ -326,6 +326,7 @@ async function handleAdminPreview(
       includeFeedChannelTitles: true,
       maxItems: PREVIEW_MAX_ITEMS,
       itemSlice,
+      lightweight: true,
     });
     return jsonResponse({
       ok: true,

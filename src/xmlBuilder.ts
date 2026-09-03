@@ -90,17 +90,35 @@ async function parseFeed(
     mergeTimeline?: boolean;
   },
   fetchFeedText: (url: string) => Promise<string>,
+  options?: { lightweight?: boolean },
 ): Promise<{ title: string; items: CustomItem[]; image?: string }> {
   const text = await fetchFeedText(url);
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@_',
-    // Large podcast feeds (e.g. HTML in descriptions) can exceed the default 1000 entity expansions.
-    processEntities: {
-      maxTotalExpansions: 50_000,
-      maxExpandedLength: 5_000_000,
-    },
-  });
+  const lightweight = options?.lightweight === true;
+  const parser = new XMLParser(
+    lightweight
+      ? {
+          // Preview: skip giant HTML blobs — they dominate CPU/memory and aren't needed for a 40-ep slice.
+          ignoreAttributes: false,
+          attributeNamePrefix: '@_',
+          processEntities: false,
+          stopNodes: [
+            'description',
+            'content:encoded',
+            'itunes:summary',
+            'itunes:subtitle',
+            'summary',
+          ],
+        }
+      : {
+          ignoreAttributes: false,
+          attributeNamePrefix: '@_',
+          // Large podcast feeds (e.g. HTML in descriptions) can exceed the default 1000 entity expansions.
+          processEntities: {
+            maxTotalExpansions: 50_000,
+            maxExpandedLength: 5_000_000,
+          },
+        },
+  );
   const result = parser.parse(text);
   const channel = result.rss.channel;
 
@@ -155,7 +173,7 @@ async function parseFeed(
                 isPermaLink: item.guid['@_isPermaLink'] === 'true',
               }
             : undefined,
-          description: item.description || '',
+          description: lightweight ? '' : item.description || '',
           pubDate: sortDate.toUTCString(), // Use adjusted date
           pubDateOriginal: originalDate.toUTCString(), // Keep original date
           enclosure: item.enclosure
@@ -247,6 +265,8 @@ export class XMLBuilder {
       maxItems?: number;
       /** Which end of the sorted timeline to keep when maxItems is set. Default newest. */
       itemSlice?: 'newest' | 'oldest';
+      /** Drop episode HTML bodies while parsing (admin preview). */
+      lightweight?: boolean;
       includeFeedChannelTitles: true;
     },
   ): Promise<{
@@ -266,6 +286,8 @@ export class XMLBuilder {
       fetchFeedText?: (url: string) => Promise<string>;
       maxItems?: number;
       itemSlice?: 'newest' | 'oldest';
+      /** Drop episode HTML bodies while parsing (admin preview). */
+      lightweight?: boolean;
       includeFeedChannelTitles?: false;
     },
   ): Promise<string>;
@@ -277,6 +299,8 @@ export class XMLBuilder {
       fetchFeedText?: (url: string) => Promise<string>;
       maxItems?: number;
       itemSlice?: 'newest' | 'oldest';
+      /** Drop episode HTML bodies while parsing (admin preview). */
+      lightweight?: boolean;
       includeFeedChannelTitles?: boolean;
     },
   ): Promise<
@@ -370,6 +394,7 @@ export class XMLBuilder {
                 mergeTimeline: feedConfig.mergeTimeline,
               },
               fetchFeedText,
+              { lightweight: options?.lightweight === true },
             );
 
             const chTitle =
@@ -453,9 +478,13 @@ export class XMLBuilder {
           feedImage,
         );
 
+        const body =
+          options?.lightweight === true
+            ? ''
+            : item.description || item.summary || '';
         feed.item({
           title: itemTitle,
-          description: item.description || item.summary || '',
+          description: body,
           url: item.link || '',
           guid: item.guid?.value || item.link || '',
           date: new Date(item.pubDate || ''),
@@ -463,7 +492,7 @@ export class XMLBuilder {
           custom_elements: [
             { 'itunes:title': itemTitle },
             { 'itunes:duration': item['itunes:duration'] || '' },
-            { 'itunes:summary': item.description || item.summary || '' },
+            { 'itunes:summary': body },
             { 'itunes:episodeType': item['itunes:episodeType'] || 'full' },
             { 'itunes:explicit': item['itunes:explicit'] || 'false' },
             { 'itunes:season': item['itunes:season'] || season },
