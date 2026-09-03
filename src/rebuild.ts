@@ -257,6 +257,12 @@ async function finalize(env: RebuildEnv, jobId: string): Promise<void> {
 
   const episodes = deserializeMergedEpisodes(allSerialized);
   const xml = buildPodcastsXml(config, episodes);
+
+  // Recheck ownership immediately before publishing — a newer Save/cron may have
+  // started while we were loading shards / building XML.
+  if (!(await requireCurrentJob(env, jobId))) {
+    return;
+  }
   await env.XML_BUCKET.put('podcasts.xml', xml, {
     httpMetadata: { contentType: 'application/xml' },
   });
