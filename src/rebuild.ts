@@ -176,17 +176,32 @@ async function promoteJobOutput(
 }
 
 /**
- * If we published while superseded, restore the last successfully published
- * job's artifact (and published pointer) so a failed newer rebuild does not
- * leave stale XML from this finalizer.
+ * If we published while superseded, restore the prior published artifact —
+ * but only when we still own the published pointer (or it never moved off the
+ * snapshot we captured). Never clobber a newer job's successful publish.
  */
 async function restorePublishedFeed(
   env: RebuildEnv,
+  ourJobId: string,
   previousPublishedJobId: string | null,
 ): Promise<void> {
-  if (!previousPublishedJobId) {
+  const publishedNow = await getPublishedJobId(env);
+  const weOwnPublish = publishedNow === ourJobId;
+  const pointerStillAtSnapshot =
+    publishedNow === previousPublishedJobId ||
+    (publishedNow == null && previousPublishedJobId == null);
+
+  if (!weOwnPublish && !pointerStillAtSnapshot) {
     return;
   }
+
+  if (!previousPublishedJobId) {
+    if (weOwnPublish) {
+      await setPublishedJobId(env, null);
+    }
+    return;
+  }
+
   const restored = await promoteJobOutput(env, previousPublishedJobId);
   if (!restored) {
     console.error(
@@ -194,7 +209,20 @@ async function restorePublishedFeed(
     );
     return;
   }
-  await setPublishedJobId(env, previousPublishedJobId);
+
+  // A newer job may have claimed publish during the R2 copy — leave their pointer.
+  const publishedAfter = await getPublishedJobId(env);
+  if (
+    publishedAfter != null &&
+    publishedAfter !== ourJobId &&
+    publishedAfter !== previousPublishedJobId
+  ) {
+    return;
+  }
+
+  if (publishedAfter === ourJobId) {
+    await setPublishedJobId(env, previousPublishedJobId);
+  }
 }
 
 /** Delete per-feed JSON shards; keep `rebuild/{jobId}/podcasts.xml` for rollback. */
@@ -350,14 +378,25 @@ async function publishJobFeed(
   });
 
   if (!(await requireCurrentJob(env, jobId))) {
-    await restorePublishedFeed(env, previousPublishedJobId);
+    await restorePublishedFeed(env, jobId, previousPublishedJobId);
     return false;
   }
 
   await setPublishedJobId(env, jobId);
 
   if (!(await requireCurrentJob(env, jobId))) {
-    await restorePublishedFeed(env, previousPublishedJobId);
+    await restorePublishedFeed(env, jobId, previousPublishedJobId);
+    return false;
+  }
+
+  // Re-write after claiming publish so a concurrent restore that still saw the
+  // old published pointer cannot leave stale XML under our published id.
+  await env.XML_BUCKET.put('podcasts.xml', xml, {
+    httpMetadata: XML_HTTP_METADATA,
+  });
+
+  if (!(await requireCurrentJob(env, jobId))) {
+    await restorePublishedFeed(env, jobId, previousPublishedJobId);
     return false;
   }
 
@@ -383,8 +422,13 @@ async function finalizeAlreadyReady(
       const promoted = await promoteJobOutput(env, jobId);
       if (promoted && (await requireCurrentJob(env, jobId))) {
         await setPublishedJobId(env, jobId);
+        if (await requireCurrentJob(env, jobId)) {
+          await promoteJobOutput(env, jobId);
+        } else {
+          await restorePublishedFeed(env, jobId, previousPublishedJobId);
+        }
       } else if (!(await requireCurrentJob(env, jobId))) {
-        await restorePublishedFeed(env, previousPublishedJobId);
+        await restorePublishedFeed(env, jobId, previousPublishedJobId);
       }
     }
   }
