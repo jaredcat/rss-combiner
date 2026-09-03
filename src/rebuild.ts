@@ -23,8 +23,12 @@ export const REBUILD_MAX_RETRIES = 5;
 /** Pointer to the active job id only — written solely by `startRebuild`. */
 export const REBUILD_CURRENT_KV_KEY = 'rebuild:v1';
 
-/** Last job whose staged output is the live feed (`rebuild/{jobId}/podcasts.xml`). */
-export const REBUILD_PUBLISHED_KV_KEY = 'rebuild:published';
+/**
+ * Live publication pointer in R2 (not KV). Conditional puts (`onlyIf` etag) give
+ * compare-and-swap so a superseded finalizer cannot clobber a newer claim.
+ * @see https://developers.cloudflare.com/r2/api/workers/workers-api-reference/
+ */
+export const REBUILD_PUBLISHED_R2_KEY = 'rebuild/published.json';
 
 function jobStatusKey(jobId: string): string {
   return `rebuild:job:${jobId}`;
@@ -41,8 +45,15 @@ export type RebuildStatus = {
   status: RebuildJobStatus;
   totalFeeds: number;
   feedIndex: number;
+  /** Job start time (ISO). Newer jobs win publication claims. */
+  createdAt: string;
   updatedAt: string;
   error?: string;
+};
+
+type PublishedPointer = {
+  jobId: string;
+  createdAt: string;
 };
 
 export type RebuildMessage =
@@ -127,43 +138,111 @@ async function requireCurrentJob(
   return current;
 }
 
-async function getPublishedJobId(env: RebuildEnv): Promise<string | null> {
-  if (!env.CONFIG_KV) {
-    return null;
+function jobCreatedAt(status: RebuildStatus): string {
+  return status.createdAt || status.updatedAt;
+}
+
+/** Return <0 if a is older than b, >0 if newer, 0 if same claim. */
+function comparePublishAge(
+  aCreatedAt: string,
+  aJobId: string,
+  bCreatedAt: string,
+  bJobId: string,
+): number {
+  if (aCreatedAt !== bCreatedAt) {
+    return aCreatedAt < bCreatedAt ? -1 : 1;
   }
-  const raw = await env.CONFIG_KV.get(REBUILD_PUBLISHED_KV_KEY);
-  if (!raw) {
-    return null;
+  if (aJobId === bJobId) {
+    return 0;
   }
+  return aJobId < bJobId ? -1 : 1;
+}
+
+function parsePublishedPointer(raw: string): PublishedPointer | null {
   try {
-    const parsed = JSON.parse(raw) as { jobId?: string };
-    return typeof parsed.jobId === 'string' ? parsed.jobId : null;
+    const parsed = JSON.parse(raw) as { jobId?: string; createdAt?: string };
+    if (
+      typeof parsed.jobId !== 'string' ||
+      typeof parsed.createdAt !== 'string'
+    ) {
+      return null;
+    }
+    return { jobId: parsed.jobId, createdAt: parsed.createdAt };
   } catch {
     return null;
   }
 }
 
-async function setPublishedJobId(
+async function readPublishedPointer(env: RebuildEnv): Promise<{
+  value: PublishedPointer | null;
+  etag: string | null;
+}> {
+  const obj = await env.XML_BUCKET.get(REBUILD_PUBLISHED_R2_KEY);
+  if (!obj) {
+    return { value: null, etag: null };
+  }
+  return {
+    value: parsePublishedPointer(await obj.text()),
+    etag: obj.httpEtag,
+  };
+}
+
+async function getPublishedJobId(env: RebuildEnv): Promise<string | null> {
+  const { value } = await readPublishedPointer(env);
+  return value?.jobId ?? null;
+}
+
+/**
+ * Atomically claim the live publication pointer via R2 etag preconditions.
+ * Returns false if a newer (or equal-and-other) job already owns publish, or
+ * if this job is no longer current.
+ */
+async function claimPublishedPointer(
   env: RebuildEnv,
-  jobId: string | null,
-): Promise<void> {
-  if (!env.CONFIG_KV) {
-    throw new Error('CONFIG_KV binding missing');
+  jobId: string,
+  createdAt: string,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if (!(await requireCurrentJob(env, jobId))) {
+      return false;
+    }
+
+    const { value, etag } = await readPublishedPointer(env);
+    if (value) {
+      if (value.jobId === jobId) {
+        return true;
+      }
+      if (
+        comparePublishAge(createdAt, jobId, value.createdAt, value.jobId) <= 0
+      ) {
+        return false;
+      }
+    }
+
+    const payload = JSON.stringify({
+      jobId,
+      createdAt,
+    } satisfies PublishedPointer);
+
+    const result = await env.XML_BUCKET.put(REBUILD_PUBLISHED_R2_KEY, payload, {
+      httpMetadata: { contentType: 'application/json' },
+      onlyIf: etag
+        ? { etagMatches: etag }
+        : { etagDoesNotMatch: '*' },
+    });
+
+    // null => precondition failed (someone else wrote).
+    if (result !== null) {
+      return true;
+    }
   }
-  if (jobId == null) {
-    await env.CONFIG_KV.delete(REBUILD_PUBLISHED_KV_KEY);
-    return;
-  }
-  await env.CONFIG_KV.put(
-    REBUILD_PUBLISHED_KV_KEY,
-    JSON.stringify({ jobId }),
-  );
+  return false;
 }
 
 const XML_HTTP_METADATA = { contentType: 'application/xml' } as const;
 
 /**
- * Live feed object: staged output for `rebuild:published`, else legacy `podcasts.xml`.
+ * Live feed object: staged output for `rebuild/published.json`, else legacy `podcasts.xml`.
  * Serving must use this — never trust `podcasts.xml` alone under concurrent finalizers.
  */
 export async function getPublishedFeedObject(
@@ -241,12 +320,14 @@ export async function startRebuild(env: RebuildEnv): Promise<RebuildStatus> {
   const config = await resolveConfig(env as Env, env.CONFIG_KV);
   const jobId = crypto.randomUUID();
   const totalFeeds = config.feeds.length;
+  const now = new Date().toISOString();
   const status: RebuildStatus = {
     jobId,
     status: 'queued',
     totalFeeds,
     feedIndex: 0,
-    updatedAt: new Date().toISOString(),
+    createdAt: now,
+    updatedAt: now,
   };
   await putJobStatus(env, status);
   // Pointer last so readers never see a new id without a job record.
@@ -273,7 +354,8 @@ async function processFeed(
   jobId: string,
   feedIndex: number,
 ): Promise<void> {
-  if (!(await requireCurrentJob(env, jobId))) {
+  const current = await requireCurrentJob(env, jobId);
+  if (!current) {
     return;
   }
 
@@ -293,6 +375,7 @@ async function processFeed(
     status: 'running',
     totalFeeds: config.feeds.length,
     feedIndex,
+    createdAt: jobCreatedAt(current),
     updatedAt: new Date().toISOString(),
   });
 
@@ -340,25 +423,26 @@ async function loadJobEpisodes(
 }
 
 /**
- * Commit this job's staged output as the live feed via `rebuild:published`.
- * Once claimed, the pointer is never rolled back — KV has no CAS, so a revert
- * can clobber a newer finalizer's publish. A later successful job overwrites it.
+ * Commit this job's staged output as the live feed.
+ * Publication uses an R2 etag CAS on `rebuild/published.json` so an older
+ * finalizer cannot overwrite a newer successful claim (KV cannot do this).
  * `podcasts.xml` remains a non-authoritative mirror.
  */
 async function publishJobFeed(
   env: RebuildEnv,
   jobId: string,
+  createdAt: string,
   xml: string,
 ): Promise<boolean> {
   await env.XML_BUCKET.put(jobOutputKey(jobId), xml, {
     httpMetadata: XML_HTTP_METADATA,
   });
 
-  if (!(await requireCurrentJob(env, jobId))) {
+  const claimed = await claimPublishedPointer(env, jobId, createdAt);
+  if (!claimed) {
     return false;
   }
 
-  await setPublishedJobId(env, jobId);
   await mirrorPublicPodcastsXml(env, xml);
   return true;
 }
@@ -374,20 +458,24 @@ async function finishReadyCleanup(env: RebuildEnv, jobId: string): Promise<void>
 /** Claim publish for an already-ready job that is still current. */
 async function claimPublishedIfCurrent(
   env: RebuildEnv,
-  jobId: string,
+  job: RebuildStatus,
 ): Promise<void> {
-  if (!(await requireCurrentJob(env, jobId))) {
+  if (!(await requireCurrentJob(env, job.jobId))) {
     return;
   }
-  if ((await getPublishedJobId(env)) === jobId) {
+  const staged = await env.XML_BUCKET.head(jobOutputKey(job.jobId));
+  if (!staged) {
     return;
   }
-  const staged = await env.XML_BUCKET.head(jobOutputKey(jobId));
-  if (!staged || !(await requireCurrentJob(env, jobId))) {
+  const claimed = await claimPublishedPointer(
+    env,
+    job.jobId,
+    jobCreatedAt(job),
+  );
+  if (!claimed) {
     return;
   }
-  await setPublishedJobId(env, jobId);
-  const body = await env.XML_BUCKET.get(jobOutputKey(jobId));
+  const body = await env.XML_BUCKET.get(jobOutputKey(job.jobId));
   if (body) {
     await mirrorPublicPodcastsXml(env, await body.text());
   }
@@ -396,12 +484,12 @@ async function claimPublishedIfCurrent(
 /** Idempotent path when job status is already ready. */
 async function finalizeAlreadyReady(
   env: RebuildEnv,
-  jobId: string,
+  job: RebuildStatus,
 ): Promise<void> {
-  if (await requireCurrentJob(env, jobId)) {
-    await claimPublishedIfCurrent(env, jobId);
+  if (await requireCurrentJob(env, job.jobId)) {
+    await claimPublishedIfCurrent(env, job);
   }
-  await finishReadyCleanup(env, jobId);
+  await finishReadyCleanup(env, job.jobId);
 }
 
 async function finalize(env: RebuildEnv, jobId: string): Promise<void> {
@@ -410,7 +498,7 @@ async function finalize(env: RebuildEnv, jobId: string): Promise<void> {
     return;
   }
   if (current.status === 'ready') {
-    await finalizeAlreadyReady(env, jobId);
+    await finalizeAlreadyReady(env, current);
     return;
   }
 
@@ -421,7 +509,12 @@ async function finalize(env: RebuildEnv, jobId: string): Promise<void> {
     deserializeMergedEpisodes(allSerialized),
   );
 
-  const published = await publishJobFeed(env, jobId, xml);
+  const published = await publishJobFeed(
+    env,
+    jobId,
+    jobCreatedAt(current),
+    xml,
+  );
   if (!published) {
     return;
   }
@@ -431,6 +524,7 @@ async function finalize(env: RebuildEnv, jobId: string): Promise<void> {
     status: 'ready',
     totalFeeds: config.feeds.length,
     feedIndex: config.feeds.length,
+    createdAt: jobCreatedAt(current),
     updatedAt: new Date().toISOString(),
   });
 
