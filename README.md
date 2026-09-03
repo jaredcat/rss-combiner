@@ -301,7 +301,7 @@ Apache `.htaccess` files are **not** applied to Cloudflare Workers. To restrict 
 
 1. **KV** — With GitHub Actions, the deploy workflow creates the namespace while `id` in `wrangler.toml` is still the placeholder. Locally, create a namespace and paste its id, or deploy once via Actions and copy the id from the log.
 2. **Admin password** — `wrangler secret put ADMIN_SECRET`, or set the `ADMIN_SECRET` GitHub Actions secret so CI syncs it on deploy.
-3. Open `https://<your-worker>.workers.dev/admin`, sign in, and save your settings. Saving updates `podcasts.xml` immediately. Expand **First-time setup: cutoffs & timeline merge** (above the default cutoff fields) for a short guide; for a full tutorial see [First-time setup: cutoffs and timeline merge](#first-time-cutoffs) below. Configuration is stored as JSON under the KV key `config:v1` (you edit feeds with add/remove rows in the UI—no raw JSON). The page includes a **rendered** preview (channel + episodes) and a **raw XML** tab, both updated as you edit.
+3. Open `https://<your-worker>.workers.dev/admin`, sign in, and save your settings. Saving updates `podcasts.xml` immediately. Expand **How cutoffs & timeline merge work** under Source feeds for a short guide; for a full tutorial see [First-time setup: cutoffs and timeline merge](#first-time-cutoffs) below. Configuration is stored as JSON under the KV key `config:v1` (you edit feeds with add/remove rows in the UI—no raw JSON). The page includes a **rendered** preview (channel + episodes) and a **raw XML** tab, both updated as you edit.
 
 `FEED_INDEX_PADDING` in `wrangler.toml` only applies when loading feeds from numbered `FEED_01_URL`–style vars (e.g. `bun run generate`); the admin UI uses a feed list and does not expose padding.
 
@@ -351,7 +351,7 @@ Use this when configuring **Default cutoff** at the top of the admin form (or `D
 5. **Preview**
    Use **Live preview** on the admin page after changing cutoffs; row headings show each source’s channel title after a successful preview.
 
-The admin UI also has an expandable **First-time setup: cutoffs & timeline merge** section above the default cutoff fields with the same ideas in short form.
+The admin UI has an expandable **How cutoffs & timeline merge work** section under Source feeds with a short version of the same ideas.
 
 ## Deployment
 

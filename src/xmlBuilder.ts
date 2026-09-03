@@ -173,6 +173,29 @@ function episodeItunesImageElements(
   };
 }
 
+
+function selectPreviewItems<T>(
+  items: T[],
+  maxItems: number | undefined,
+  itemSlice: 'newest' | 'oldest',
+): { items: T[]; truncated: boolean } {
+  if (
+    typeof maxItems !== 'number' ||
+    !Number.isFinite(maxItems) ||
+    maxItems <= 0 ||
+    items.length <= maxItems
+  ) {
+    return { items, truncated: false };
+  }
+  return {
+    truncated: true,
+    items:
+      itemSlice === 'oldest'
+        ? items.slice(0, maxItems)
+        : items.slice(-maxItems),
+  };
+}
+
 export class XMLBuilder {
   static async fetchXml(
     config: AppConfig,
@@ -180,9 +203,19 @@ export class XMLBuilder {
       quiet?: boolean;
       cacheFeedBodies?: boolean;
       fetchFeedText?: (url: string) => Promise<string>;
+      /** Cap episodes in the output. Used by admin preview. */
+      maxItems?: number;
+      /** Which end of the sorted timeline to keep when maxItems is set. Default newest. */
+      itemSlice?: 'newest' | 'oldest';
       includeFeedChannelTitles: true;
     },
-  ): Promise<{ xml: string; channelTitles: string[] }>;
+  ): Promise<{
+    xml: string;
+    channelTitles: string[];
+    previewTruncated?: boolean;
+    previewTotalItems?: number;
+    previewSlice?: 'newest' | 'oldest';
+  }>;
   static async fetchXml(
     config: AppConfig,
     options?: {
@@ -191,6 +224,8 @@ export class XMLBuilder {
       cacheFeedBodies?: boolean;
       /** Override how feed XML is loaded (tests). */
       fetchFeedText?: (url: string) => Promise<string>;
+      maxItems?: number;
+      itemSlice?: 'newest' | 'oldest';
       includeFeedChannelTitles?: false;
     },
   ): Promise<string>;
@@ -200,9 +235,20 @@ export class XMLBuilder {
       quiet?: boolean;
       cacheFeedBodies?: boolean;
       fetchFeedText?: (url: string) => Promise<string>;
+      maxItems?: number;
+      itemSlice?: 'newest' | 'oldest';
       includeFeedChannelTitles?: boolean;
     },
-  ): Promise<string | { xml: string; channelTitles: string[] }> {
+  ): Promise<
+    | string
+    | {
+        xml: string;
+        channelTitles: string[];
+        previewTruncated?: boolean;
+        previewTotalItems?: number;
+        previewSlice?: 'newest' | 'oldest';
+      }
+  > {
     if (!options?.quiet) {
       console.log('Collecting feed configs...');
     }
@@ -263,6 +309,11 @@ export class XMLBuilder {
     }[] = [];
 
     const channelTitles: string[] = feeds.map(() => '');
+    const previewMeta: {
+      truncated: boolean;
+      total: number;
+      slice: 'newest' | 'oldest';
+    } = { truncated: false, total: 0, slice: 'newest' };
 
     try {
       await Promise.all(
@@ -322,7 +373,15 @@ export class XMLBuilder {
         (a, b) => a.item.sortDate.getTime() - b.item.sortDate.getTime(),
       );
 
-      if (allItems.length === 0) {
+      // Sorted ascending by sortDate: oldest first, newest last.
+      const itemSlice = options?.itemSlice === 'oldest' ? 'oldest' : 'newest';
+      previewMeta.total = allItems.length;
+      previewMeta.slice = itemSlice;
+      const selected = selectPreviewItems(allItems, options?.maxItems, itemSlice);
+      previewMeta.truncated = selected.truncated;
+      const itemsForOutput = selected.items;
+
+      if (itemsForOutput.length === 0) {
         const emptyXml = feed.xml({ indent: true });
         if (options?.includeFeedChannelTitles) {
           return { xml: emptyXml, channelTitles };
@@ -332,8 +391,10 @@ export class XMLBuilder {
 
       let episode = 0;
       let season = 1;
-      let currentSeasonMonth = new Date(allItems[0].item.pubDate).getUTCMonth();
-      allItems.forEach(({ item, feedTitle: srcFeedTitle, feedImage }) => {
+      let currentSeasonMonth = new Date(
+        itemsForOutput[0].item.pubDate,
+      ).getUTCMonth();
+      itemsForOutput.forEach(({ item, feedTitle: srcFeedTitle, feedImage }) => {
         const itemTitle = `${item.title || ''} - ${srcFeedTitle}`;
         episode++;
 
@@ -375,9 +436,19 @@ export class XMLBuilder {
       throw error;
     }
 
-    const xmlOut = feed.xml({ indent: true });
+    const xmlOut = feed.xml({ indent: !previewMeta.truncated });
     if (options?.includeFeedChannelTitles) {
-      return { xml: xmlOut, channelTitles };
+      return {
+        xml: xmlOut,
+        channelTitles,
+        ...(previewMeta.truncated
+          ? {
+              previewTruncated: true,
+              previewTotalItems: previewMeta.total,
+              previewSlice: previewMeta.slice,
+            }
+          : {}),
+      };
     }
     return xmlOut;
   }

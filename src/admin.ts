@@ -173,11 +173,6 @@ export function adminFormHtml(
     .feed-merge-timeline input { width: auto; margin: 0.2rem 0.35rem 0 0; flex-shrink: 0; }
     .feed-merge-timeline-block { margin-top: 0.75rem; }
     .feed-merge-timeline-oneline { font-size: 0.8rem; color: #666; font-weight: normal; margin: 0.3rem 0 0 0; line-height: 1.3; }
-    .first-setup-guide { margin: 0.75rem 0 1rem 0; font-size: 0.88rem; border: 1px solid #cbd5e0; border-radius: 8px; padding: 0.5rem 0.75rem; background: #f7fafc; }
-    .first-setup-guide summary { cursor: pointer; font-weight: 600; color: #2d3748; }
-    .first-setup-guide .hint { margin: 0.65rem 0 0 0; }
-    .first-setup-guide .hint p { margin: 0.45rem 0 0 0; }
-    .first-setup-guide .hint p:first-child { margin-top: 0.35rem; }
     .feed-merge-timeline-explainer { margin: 0.75rem 0 1rem 0; font-size: 0.88rem; border: 1px solid #e2e8f0; border-radius: 8px; padding: 0.5rem 0.75rem; background: #fff; }
     .feed-merge-timeline-explainer summary { cursor: pointer; font-weight: 600; color: #2d3748; }
     .feed-merge-timeline-explainer .hint { margin: 0.65rem 0 0 0; }
@@ -269,15 +264,7 @@ export function adminFormHtml(
     <label for="publicBaseUrl">Public base URL <span class="hint">(no trailing slash; RSS <code>link</code> / <code>atom:link</code> — usually your worker URL)</span></label>
     <input id="publicBaseUrl" name="publicBaseUrl" type="url" value="${escapeHtml(config.publicBaseUrl)}" required>
 
-    <details class="first-setup-guide">
-      <summary>First-time setup: cutoffs &amp; timeline merge</summary>
-      <div class="hint">
-        <p><strong>Default cutoff</strong> — Day/month/year for feeds that <em>don’t</em> use a per-row override. Only episodes published <em>after</em> this date are included. The default <strong>year</strong> is the target timeline when <strong>Merge this feed’s timeline</strong> applies year-shifting on a row (see below).</p>
-        <p><strong>Per-feed cutoff</strong> — Optional year (and month/day) per row; blank fields use the default cutoff. This only controls <strong>which episodes are included</strong> (published after that date)—it does <strong>not</strong> reorder or shift dates by itself. You can set an older year (e.g. <code>2014</code> vs default <code>2024</code>) to include more of a show’s history; to <strong>interleave</strong> that show with your others you also need <strong>Merge this feed’s timeline</strong> checked on that row.</p>
-        <p><strong>Merge this feed’s timeline</strong> — When checked and this row’s cutoff year is older than the default, <strong>year-shifting</strong> runs (episode dates move forward so the combined feed sorts as one mix). Leave it off to keep real published dates (only cutoff filtering applies). See <code>README.md</code> for the full walkthrough.</p>
-      </div>
-    </details>
-
+    <p class="hint">Default cutoff applies to any source row that leaves its cutoff blank. Per-feed overrides and <strong>Merge this feed’s timeline</strong> are on each source row — open <strong>How cutoffs &amp; timeline merge work</strong> there, or see <code>README.md</code>.</p>
     <div class="row">
       <label>Default cutoff — day <input name="defaultCutoffDay" type="number" min="1" max="31" value="${escapeHtml(config.defaultCutoff.day)}"></label>
       <label>month <input name="defaultCutoffMonth" type="number" min="1" max="12" value="${escapeHtml(config.defaultCutoff.month)}"></label>
@@ -297,9 +284,9 @@ export function adminFormHtml(
       <details class="feed-merge-timeline-explainer">
         <summary>How cutoffs &amp; timeline merge work</summary>
         <div class="hint">
-          <p><strong>Why merge?</strong> In chronological listening, one podcast with a long history can otherwise dominate the queue. Cutoff fields alone only filter <em>which</em> episodes are included. To <strong>interleave</strong> a deep backlog with your other shows, set a <strong>per-feed cutoff year</strong> older than the default (so year-shifting can apply), <em>and</em> turn on <strong>Merge this feed’s timeline</strong>—then the app <strong>shifts years</strong> on that feed’s episodes so they sort alongside your other podcasts.</p>
-          <p><strong>Cutoff date</strong> — Only episodes whose original publication date is <em>after</em> this row’s cutoff (per-feed fields, or the default at the top where blank) are candidates for the combined feed.</p>
-          <p><strong>Merge this feed’s timeline</strong> — When checked <em>and</em> this row’s cutoff year is older than the default, episode dates are adjusted forward so sorting matches the mix you want. Unchecked: no year shift (only cutoff filtering). If there’s no older cutoff year on the row, leave the box off—nothing to merge.</p>
+          <p><strong>Cutoff date</strong> — Only episodes whose original publication date is <em>after</em> this row’s cutoff are included. Blank per-feed fields use the default cutoff at the top of the form.</p>
+          <p><strong>Merge this feed’s timeline</strong> — When checked and this row’s cutoff year is older than the default, episode dates are shifted forward toward that default year so the combined feed sorts as one mix. Unchecked: no year shift (only cutoff filtering). If this row has no older cutoff year, leave the box off—nothing to merge.</p>
+          <p><strong>Why merge?</strong> In chronological listening, a show with a long history can otherwise dominate the queue. Cutoff fields only choose <em>which</em> episodes are included. To interleave a deep backlog (e.g. cutoff year <code>2014</code> vs default <code>2024</code>), set that older per-feed year and check <strong>Merge this feed’s timeline</strong> on the row. See <code>README.md</code> for the full walkthrough.</p>
         </div>
       </details>
       <div id="feeds-container">${buildFeedsSection(config)}</div>
@@ -322,6 +309,11 @@ export function adminFormHtml(
     <p id="preview-status" class="hint">Generating…</p>
     <p><button type="button" id="preview-refresh-feeds">Refresh feed sources</button>
     <span class="hint"> — full re-download of every source RSS (ignores preview cache).</span></p>
+    <div class="preview-tabs" role="group" aria-label="Preview episode slice">
+      <button type="button" class="active" id="preview-slice-newest" data-slice="newest">Newest 40</button>
+      <button type="button" id="preview-slice-oldest" data-slice="oldest">Oldest 40</button>
+    </div>
+    <p class="hint" style="margin:0.35rem 0 0.75rem">Preview only shows 40 episodes so large feeds stay under Worker limits. Save / cron still write the full feed.</p>
     <div class="preview-tabs">
       <button type="button" class="active" id="tab-rendered" data-panel="rendered">Rendered</button>
       <button type="button" id="tab-raw" data-panel="raw">Raw XML</button>
@@ -539,6 +531,28 @@ export function adminFormHtml(
 
     var t = null;
     var delay = 450;
+    var previewSlice = 'newest';
+    var sliceNewestBtn = document.getElementById('preview-slice-newest');
+    var sliceOldestBtn = document.getElementById('preview-slice-oldest');
+    function setPreviewSlice(slice) {
+      previewSlice = slice === 'oldest' ? 'oldest' : 'newest';
+      if (sliceNewestBtn) sliceNewestBtn.classList.toggle('active', previewSlice === 'newest');
+      if (sliceOldestBtn) sliceOldestBtn.classList.toggle('active', previewSlice === 'oldest');
+    }
+    if (sliceNewestBtn) {
+      sliceNewestBtn.addEventListener('click', function () {
+        if (previewSlice === 'newest') return;
+        setPreviewSlice('newest');
+        runPreview(false);
+      });
+    }
+    if (sliceOldestBtn) {
+      sliceOldestBtn.addEventListener('click', function () {
+        if (previewSlice === 'oldest') return;
+        setPreviewSlice('oldest');
+        runPreview(false);
+      });
+    }
     function schedule() {
       clearTimeout(t);
       statusEl.textContent = 'Waiting…';
@@ -553,12 +567,21 @@ export function adminFormHtml(
       try {
         var fd = new FormData(form);
         if (bypassCache) fd.set('bypassFeedCache', '1');
+        fd.set('previewSlice', previewSlice);
         var r = await fetch('/admin/preview', { method: 'POST', body: fd, credentials: 'same-origin' });
+        var rawText = await r.text();
         var j;
         try {
-          j = await r.json();
+          j = JSON.parse(rawText);
         } catch (parseErr) {
-          throw new Error(r.status === 401 ? 'Session expired — refresh the page' : 'Invalid response from server');
+          if (r.status === 401) {
+            throw new Error('Session expired — refresh the page');
+          }
+          var snippet = (rawText || '').replace(/\s+/g, ' ').slice(0, 160);
+          throw new Error(
+            'Invalid response from server (HTTP ' + r.status + ')' +
+            (snippet ? ': ' + snippet : ' — often means the Worker hit resource limits on a very large feed')
+          );
         }
         if (!r.ok || !j.ok) {
           throw new Error(j.error || r.statusText || 'Preview failed');
@@ -578,7 +601,19 @@ export function adminFormHtml(
           }
           renumberFeedRows();
         }
-        statusEl.textContent = 'Preview updated';
+        if (j.previewTruncated) {
+          var which = (j.previewSlice || previewSlice) === 'oldest' ? 'oldest' : 'newest';
+          statusEl.textContent =
+            'Preview updated (showing ' +
+            which +
+            ' ' +
+            (j.previewMaxItems || '?') +
+            ' of ' +
+            (j.previewTotalItems || '?') +
+            ' episodes — full feed still builds on Save / cron)';
+        } else {
+          statusEl.textContent = 'Preview updated';
+        }
         statusEl.className = 'hint';
       } catch (e) {
         statusEl.textContent = 'Error: ' + (e && e.message ? e.message : String(e));
