@@ -18,8 +18,10 @@ import {
 } from './config';
 import { clearPreviewFeedMemoryCache } from './feedFetch';
 import {
+  getPublishedFeedObject,
   getRebuildStatus,
   handleRebuildQueueBatch,
+  headPublishedFeedObject,
   rebuildStatusFlash,
   startRebuild,
   type RebuildMessage,
@@ -461,7 +463,7 @@ async function handlePodcastsXml(
   env: Env,
 ): Promise<Response> {
   try {
-    const obj = await env.XML_BUCKET.get('podcasts.xml');
+    const obj = await getPublishedFeedObject(env);
     if (!obj) {
       return new Response('File not found', { status: 404 });
     }
@@ -483,7 +485,7 @@ async function handleHealthcheck(
   env: Env,
 ): Promise<Response> {
   try {
-    const obj = await env.XML_BUCKET.head('podcasts.xml');
+    const obj = await headPublishedFeedObject(env);
     return jsonResponse({
       status: 'healthy',
       lastModified: obj?.uploaded,

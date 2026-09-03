@@ -4,6 +4,8 @@ import type {
   MessageBatch,
   Queue,
   R2Bucket,
+  R2Object,
+  R2ObjectBody,
 } from '@cloudflare/workers-types';
 import { resolveConfig } from './config';
 import type { Env } from './worker';
@@ -21,14 +23,14 @@ export const REBUILD_MAX_RETRIES = 5;
 /** Pointer to the active job id only — written solely by `startRebuild`. */
 export const REBUILD_CURRENT_KV_KEY = 'rebuild:v1';
 
-/** Last job whose output was successfully promoted to `podcasts.xml`. */
+/** Last job whose staged output is the live feed (`rebuild/{jobId}/podcasts.xml`). */
 export const REBUILD_PUBLISHED_KV_KEY = 'rebuild:published';
 
 function jobStatusKey(jobId: string): string {
   return `rebuild:job:${jobId}`;
 }
 
-function jobOutputKey(jobId: string): string {
+export function jobOutputKey(jobId: string): string {
   return `rebuild/${jobId}/podcasts.xml`;
 }
 
@@ -160,72 +162,70 @@ async function setPublishedJobId(
 
 const XML_HTTP_METADATA = { contentType: 'application/xml' } as const;
 
-/** Copy a job-scoped feed artifact to the public `podcasts.xml` key. */
-async function promoteJobOutput(
+/**
+ * Live feed object: staged output for `rebuild:published`, else legacy `podcasts.xml`.
+ * Serving must use this — never trust `podcasts.xml` alone under concurrent finalizers.
+ */
+export async function getPublishedFeedObject(
   env: RebuildEnv,
-  jobId: string,
-): Promise<boolean> {
-  const obj = await env.XML_BUCKET.get(jobOutputKey(jobId));
-  if (!obj) {
-    return false;
+): Promise<R2ObjectBody | null> {
+  const publishedId = await getPublishedJobId(env);
+  if (publishedId) {
+    const staged = await env.XML_BUCKET.get(jobOutputKey(publishedId));
+    if (staged) {
+      return staged;
+    }
   }
-  await env.XML_BUCKET.put('podcasts.xml', obj.body, {
-    httpMetadata: XML_HTTP_METADATA,
-  });
-  return true;
+  return env.XML_BUCKET.get('podcasts.xml');
+}
+
+export async function headPublishedFeedObject(
+  env: RebuildEnv,
+): Promise<R2Object | null> {
+  const publishedId = await getPublishedJobId(env);
+  if (publishedId) {
+    const staged = await env.XML_BUCKET.head(jobOutputKey(publishedId));
+    if (staged) {
+      return staged;
+    }
+  }
+  return env.XML_BUCKET.head('podcasts.xml');
+}
+
+/** Best-effort legacy mirror; not authoritative for GET /podcasts.xml. */
+async function mirrorPublicPodcastsXml(
+  env: RebuildEnv,
+  xml: string,
+): Promise<void> {
+  try {
+    await env.XML_BUCKET.put('podcasts.xml', xml, {
+      httpMetadata: XML_HTTP_METADATA,
+    });
+  } catch (error) {
+    console.error(
+      'podcasts.xml mirror failed (published job output is authoritative):',
+      error,
+    );
+  }
 }
 
 /**
- * If we published while superseded, restore the prior published artifact —
- * but only when we still own the published pointer (or it never moved off the
- * snapshot we captured). Never clobber a newer job's successful publish.
+ * If we claimed `rebuild:published` and then lost current-job ownership, revert
+ * the pointer only — never rewrite R2 (that races with newer finalizers).
  */
-async function restorePublishedFeed(
+async function revertPublishedPointerIfOwned(
   env: RebuildEnv,
   ourJobId: string,
   previousPublishedJobId: string | null,
 ): Promise<void> {
   const publishedNow = await getPublishedJobId(env);
-  const weOwnPublish = publishedNow === ourJobId;
-  const pointerStillAtSnapshot =
-    publishedNow === previousPublishedJobId ||
-    (publishedNow == null && previousPublishedJobId == null);
-
-  if (!weOwnPublish && !pointerStillAtSnapshot) {
+  if (publishedNow !== ourJobId) {
     return;
   }
-
-  if (!previousPublishedJobId) {
-    if (weOwnPublish) {
-      await setPublishedJobId(env, null);
-    }
-    return;
-  }
-
-  const restored = await promoteJobOutput(env, previousPublishedJobId);
-  if (!restored) {
-    console.error(
-      `Could not restore podcasts.xml from published job ${previousPublishedJobId}`,
-    );
-    return;
-  }
-
-  // A newer job may have claimed publish during the R2 copy — leave their pointer.
-  const publishedAfter = await getPublishedJobId(env);
-  if (
-    publishedAfter != null &&
-    publishedAfter !== ourJobId &&
-    publishedAfter !== previousPublishedJobId
-  ) {
-    return;
-  }
-
-  if (publishedAfter === ourJobId) {
-    await setPublishedJobId(env, previousPublishedJobId);
-  }
+  await setPublishedJobId(env, previousPublishedJobId);
 }
 
-/** Delete per-feed JSON shards; keep `rebuild/{jobId}/podcasts.xml` for rollback. */
+/** Delete per-feed JSON shards; keep `rebuild/{jobId}/podcasts.xml` as the live artifact. */
 async function deleteFeedShards(env: RebuildEnv, jobId: string): Promise<void> {
   const prefix = shardPrefix(jobId);
   let cursor: string | undefined;
@@ -356,8 +356,9 @@ async function loadJobEpisodes(
 }
 
 /**
- * Promote staged job output to public `podcasts.xml`, rolling back if we lose
- * ownership mid-publish. Returns true when this job remains current and published.
+ * Commit this job's staged output as the live feed via `rebuild:published`.
+ * Never rolls back R2 — superseded callers only revert the KV pointer if they
+ * still own it. `podcasts.xml` is a non-authoritative mirror.
  */
 async function publishJobFeed(
   env: RebuildEnv,
@@ -373,30 +374,17 @@ async function publishJobFeed(
   }
 
   const previousPublishedJobId = await getPublishedJobId(env);
-  await env.XML_BUCKET.put('podcasts.xml', xml, {
-    httpMetadata: XML_HTTP_METADATA,
-  });
-
-  if (!(await requireCurrentJob(env, jobId))) {
-    await restorePublishedFeed(env, jobId, previousPublishedJobId);
-    return false;
-  }
-
   await setPublishedJobId(env, jobId);
 
   if (!(await requireCurrentJob(env, jobId))) {
-    await restorePublishedFeed(env, jobId, previousPublishedJobId);
+    await revertPublishedPointerIfOwned(env, jobId, previousPublishedJobId);
     return false;
   }
 
-  // Re-write after claiming publish so a concurrent restore that still saw the
-  // old published pointer cannot leave stale XML under our published id.
-  await env.XML_BUCKET.put('podcasts.xml', xml, {
-    httpMetadata: XML_HTTP_METADATA,
-  });
+  await mirrorPublicPodcastsXml(env, xml);
 
   if (!(await requireCurrentJob(env, jobId))) {
-    await restorePublishedFeed(env, jobId, previousPublishedJobId);
+    await revertPublishedPointerIfOwned(env, jobId, previousPublishedJobId);
     return false;
   }
 
@@ -411,26 +399,37 @@ async function finishReadyCleanup(env: RebuildEnv, jobId: string): Promise<void>
   }
 }
 
+/** Claim publish for an already-ready job that is still current. */
+async function claimPublishedIfCurrent(
+  env: RebuildEnv,
+  jobId: string,
+): Promise<void> {
+  const previousPublishedJobId = await getPublishedJobId(env);
+  if (previousPublishedJobId === jobId) {
+    return;
+  }
+  const staged = await env.XML_BUCKET.head(jobOutputKey(jobId));
+  if (!staged || !(await requireCurrentJob(env, jobId))) {
+    return;
+  }
+  await setPublishedJobId(env, jobId);
+  if (!(await requireCurrentJob(env, jobId))) {
+    await revertPublishedPointerIfOwned(env, jobId, previousPublishedJobId);
+    return;
+  }
+  const body = await env.XML_BUCKET.get(jobOutputKey(jobId));
+  if (body) {
+    await mirrorPublicPodcastsXml(env, await body.text());
+  }
+}
+
 /** Idempotent path when job status is already ready. */
 async function finalizeAlreadyReady(
   env: RebuildEnv,
   jobId: string,
 ): Promise<void> {
   if (await requireCurrentJob(env, jobId)) {
-    const previousPublishedJobId = await getPublishedJobId(env);
-    if (previousPublishedJobId !== jobId) {
-      const promoted = await promoteJobOutput(env, jobId);
-      if (promoted && (await requireCurrentJob(env, jobId))) {
-        await setPublishedJobId(env, jobId);
-        if (await requireCurrentJob(env, jobId)) {
-          await promoteJobOutput(env, jobId);
-        } else {
-          await restorePublishedFeed(env, jobId, previousPublishedJobId);
-        }
-      } else if (!(await requireCurrentJob(env, jobId))) {
-        await restorePublishedFeed(env, jobId, previousPublishedJobId);
-      }
-    }
+    await claimPublishedIfCurrent(env, jobId);
   }
   await finishReadyCleanup(env, jobId);
 }
