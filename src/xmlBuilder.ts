@@ -43,6 +43,22 @@ function compareStrings(a: string, b: string): number {
   return a < b ? -1 : 1;
 }
 
+function compareSortTimes(a: Date, b: Date): number {
+  const aTime = a.getTime();
+  const bTime = b.getTime();
+  const aInvalid = Number.isNaN(aTime);
+  const bInvalid = Number.isNaN(bTime);
+  if (aInvalid && bInvalid) return 0;
+  if (aInvalid) return 1;
+  if (bInvalid) return -1;
+  return aTime - bTime;
+}
+
+function guidSortKey(item: CustomItem): string {
+  const value = item.guid?.value;
+  return typeof value === 'string' ? value : String(value ?? '');
+}
+
 /** Date first; ties use guid/link/title/source so Promise.all finish order cannot reshuffle. */
 function compareItems(
   a: CustomItem,
@@ -50,10 +66,10 @@ function compareItems(
   aSource = '',
   bSource = '',
 ): number {
-  const byDate = a.sortDate.getTime() - b.sortDate.getTime();
+  const byDate = compareSortTimes(a.sortDate, b.sortDate);
   if (byDate !== 0) return byDate;
 
-  const byGuid = compareStrings(a.guid?.value || '', b.guid?.value || '');
+  const byGuid = compareStrings(guidSortKey(a), guidSortKey(b));
   if (byGuid !== 0) return byGuid;
 
   const byLink = compareStrings(a.link || '', b.link || '');
@@ -135,7 +151,7 @@ async function parseFeed(
           link: item.link || '',
           guid: item.guid
             ? {
-                value: item.guid['#text'] || item.guid,
+                value: normalizeRssText(item.guid),
                 isPermaLink: item.guid['@_isPermaLink'] === 'true',
               }
             : undefined,
