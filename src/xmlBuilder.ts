@@ -1,6 +1,6 @@
 import { XMLParser } from 'fast-xml-parser';
 import RSS from 'rss';
-import type { AppConfig, CoverMode } from './config';
+import type { AppConfig, CoverMode, FeedEntry } from './config';
 import { defaultFetchFeedText, getPreviewFeedText } from './feedFetch';
 
 /** RSS `pubDate` may be a string or `{ '#text': string }` from fast-xml-parser. */
@@ -13,7 +13,8 @@ function normalizeRssText(value: unknown): string {
   return '';
 }
 
-type CustomItem = {
+/** Episode after parse + timeline shift (in-memory). */
+export type CustomItem = {
   title: string;
   link?: string;
   guid?: {
@@ -38,6 +39,22 @@ type CustomItem = {
   sortDate: Date;
 };
 
+/** One episode bound to its source feed (for merge + R2 shards). */
+export type MergedEpisode = {
+  item: CustomItem;
+  feedTitle: string;
+  feedUrl: string;
+  feedImage?: string;
+};
+
+/** JSON-safe shard stored in R2 during queue rebuild. */
+export type SerializedMergedEpisode = {
+  item: Omit<CustomItem, 'sortDate'> & { sortDate: string };
+  feedTitle: string;
+  feedUrl: string;
+  feedImage?: string;
+};
+
 function compareStrings(a: string, b: string): number {
   if (a === b) return 0;
   return a < b ? -1 : 1;
@@ -60,7 +77,7 @@ function guidSortKey(item: CustomItem): string {
 }
 
 /** Date first; ties use guid/link/title/source so Promise.all finish order cannot reshuffle. */
-function compareItems(
+export function compareItems(
   a: CustomItem,
   b: CustomItem,
   aSource = '',
@@ -79,6 +96,34 @@ function compareItems(
   if (byTitle !== 0) return byTitle;
 
   return compareStrings(aSource, bSource);
+}
+
+export function serializeMergedEpisodes(
+  episodes: MergedEpisode[],
+): SerializedMergedEpisode[] {
+  return episodes.map((ep) => ({
+    feedTitle: ep.feedTitle,
+    feedUrl: ep.feedUrl,
+    feedImage: ep.feedImage,
+    item: {
+      ...ep.item,
+      sortDate: ep.item.sortDate.toISOString(),
+    },
+  }));
+}
+
+export function deserializeMergedEpisodes(
+  episodes: SerializedMergedEpisode[],
+): MergedEpisode[] {
+  return episodes.map((ep) => ({
+    feedTitle: ep.feedTitle,
+    feedUrl: ep.feedUrl,
+    feedImage: ep.feedImage,
+    item: {
+      ...ep.item,
+      sortDate: new Date(ep.item.sortDate),
+    },
+  }));
 }
 
 async function parseFeed(
@@ -231,7 +276,6 @@ function episodeItunesImageElements(
   };
 }
 
-
 function selectPreviewItems<T>(
   items: T[],
   maxItems: number | undefined,
@@ -252,6 +296,175 @@ function selectPreviewItems<T>(
         ? items.slice(0, maxItems)
         : items.slice(-maxItems),
   };
+}
+
+function createRssChannel(config: AppConfig): RSS {
+  const feedImageUrl = config.feedImageUrl;
+  const feedTitle = config.feedTitle;
+  const base = config.publicBaseUrl.replace(/\/$/, '');
+  const feedUrl = `${base}/podcasts.xml`;
+
+  return new RSS({
+    title: feedTitle || 'My Combined Podcast Feed',
+    description: 'A combined feed of all my favorite podcasts',
+    feed_url: feedUrl,
+    site_url: base,
+    generator: 'Cloudflare Worker RSS Combiner',
+    language: 'en',
+    ...(feedImageUrl && {
+      image_url: feedImageUrl,
+      image: {
+        url: feedImageUrl,
+        title: feedTitle || 'My Combined Podcast Feed',
+        link: base,
+      },
+    }),
+    custom_namespaces: {
+      // Podcast namespace URIs are historically http:// (not fetch URLs).
+      // eslint-disable-next-line sonarjs/no-clear-text-protocols -- XML namespace identifiers
+      itunes: 'http://www.itunes.com/dtds/podcast-1.0.dtd',
+      content: 'http://purl.org/rss/1.0/modules/content/',
+    },
+    custom_elements: [
+      { 'itunes:author': 'RSS Feed Combiner' },
+      { 'itunes:explicit': 'false' },
+      { 'itunes:type': 'episodic' },
+      { 'itunes:category': { _attr: { text: 'Technology' } } },
+      ...(feedImageUrl
+        ? [{ 'itunes:image': { _attr: { href: feedImageUrl } } }]
+        : []),
+    ],
+  });
+}
+
+function appendEpisodesToRss(
+  feed: RSS,
+  config: AppConfig,
+  itemsForOutput: MergedEpisode[],
+  options?: { lightweight?: boolean },
+): void {
+  if (itemsForOutput.length === 0) {
+    return;
+  }
+
+  let episode = 0;
+  let season = 1;
+  let currentSeasonMonth = new Date(
+    itemsForOutput[0].item.pubDate,
+  ).getUTCMonth();
+
+  for (const { item, feedTitle: srcFeedTitle, feedImage } of itemsForOutput) {
+    const itemTitle = `${item.title || ''} - ${srcFeedTitle}`;
+    episode++;
+
+    const itemMonth = new Date(item.pubDate).getUTCMonth();
+    if (itemMonth !== currentSeasonMonth) {
+      season++;
+      currentSeasonMonth = itemMonth;
+    }
+
+    const imgEl = episodeItunesImageElements(
+      config.coverMode,
+      config.feedImageUrl,
+      item['itunes:image'] || '',
+      feedImage,
+    );
+
+    const body =
+      options?.lightweight === true
+        ? ''
+        : item.description || item.summary || '';
+    feed.item({
+      title: itemTitle,
+      description: body,
+      url: item.link || '',
+      guid: item.guid?.value || item.link || '',
+      date: new Date(item.pubDate || ''),
+      enclosure: item.enclosure,
+      custom_elements: [
+        { 'itunes:title': itemTitle },
+        { 'itunes:duration': item['itunes:duration'] || '' },
+        { 'itunes:summary': body },
+        { 'itunes:episodeType': item['itunes:episodeType'] || 'full' },
+        { 'itunes:explicit': item['itunes:explicit'] || 'false' },
+        { 'itunes:season': item['itunes:season'] || season },
+        { 'itunes:episode': item['itunes:episode'] || episode },
+        { pubDateOriginal: item.pubDateOriginal },
+        imgEl,
+      ].filter(Boolean),
+    });
+  }
+}
+
+/**
+ * Fetch, parse, and cutoff-filter a single source feed into merged episodes.
+ * Used by queue rebuild (one feed per invocation) and by fetchXml.
+ */
+export async function parseAndFilterFeed(
+  feedConfig: FeedEntry,
+  config: AppConfig,
+  fetchFeedText: (url: string) => Promise<string> = defaultFetchFeedText,
+  options?: { lightweight?: boolean },
+): Promise<{ channelTitle: string; episodes: MergedEpisode[] }> {
+  const defaultYear = config.defaultCutoff.year;
+  const defaultMonth = config.defaultCutoff.month;
+  const defaultDay = config.defaultCutoff.day;
+
+  const parsedFeed = await parseFeed(
+    feedConfig.url,
+    {
+      yearCutoff: feedConfig.cutoffYear
+        ? Number.parseInt(feedConfig.cutoffYear, 10)
+        : undefined,
+      defaultCutoffYear: Number.parseInt(defaultYear, 10),
+      mergeTimeline: feedConfig.mergeTimeline,
+    },
+    fetchFeedText,
+    { lightweight: options?.lightweight === true },
+  );
+
+  const channelTitle =
+    typeof parsedFeed.title === 'string'
+      ? parsedFeed.title.trim()
+      : String(parsedFeed.title ?? '').trim();
+
+  const episodes: MergedEpisode[] = [];
+  for (const item of parsedFeed.items) {
+    if (!item.pubDate) continue;
+    const pubDate = new Date(item.pubDateOriginal || '');
+    const cutoffDate = new Date(
+      Number.parseInt(feedConfig.cutoffYear || defaultYear, 10),
+      Number.parseInt(feedConfig.cutoffMonth || defaultMonth, 10) - 1,
+      Number.parseInt(feedConfig.cutoffDay || defaultDay, 10),
+    );
+    cutoffDate.setHours(0, 0, 0, 0);
+    if (cutoffDate >= pubDate) continue;
+
+    episodes.push({
+      item,
+      feedTitle: parsedFeed.title || '',
+      feedUrl: feedConfig.url,
+      feedImage: parsedFeed.image,
+    });
+  }
+
+  return { channelTitle, episodes };
+}
+
+/** Merge episode lists, sort deterministically, and build podcasts.xml. */
+export function buildPodcastsXml(
+  config: AppConfig,
+  allItems: MergedEpisode[],
+  options?: { indent?: boolean; lightweight?: boolean },
+): string {
+  const feed = createRssChannel(config);
+  const sorted = [...allItems].sort((a, b) =>
+    compareItems(a.item, b.item, a.feedUrl, b.feedUrl),
+  );
+  appendEpisodesToRss(feed, config, sorted, {
+    lightweight: options?.lightweight,
+  });
+  return feed.xml({ indent: options?.indent !== false });
 }
 
 export class XMLBuilder {
@@ -316,48 +529,8 @@ export class XMLBuilder {
     if (!options?.quiet) {
       console.log('Collecting feed configs...');
     }
-    const feedImageUrl = config.feedImageUrl;
-    const feedTitle = config.feedTitle;
-    const base = config.publicBaseUrl.replace(/\/$/, '');
-    const feedUrl = `${base}/podcasts.xml`;
-
-    const feed = new RSS({
-      title: feedTitle || 'My Combined Podcast Feed',
-      description: 'A combined feed of all my favorite podcasts',
-      feed_url: feedUrl,
-      site_url: base,
-      generator: 'Cloudflare Worker RSS Combiner',
-      language: 'en',
-      ...(feedImageUrl && {
-        image_url: feedImageUrl,
-        image: {
-          url: feedImageUrl,
-          title: feedTitle || 'My Combined Podcast Feed',
-          link: base,
-        },
-      }),
-      custom_namespaces: {
-        // Podcast namespace URIs are historically http:// (not fetch URLs).
-        // eslint-disable-next-line sonarjs/no-clear-text-protocols -- XML namespace identifiers
-        itunes: 'http://www.itunes.com/dtds/podcast-1.0.dtd',
-        content: 'http://purl.org/rss/1.0/modules/content/',
-      },
-      custom_elements: [
-        { 'itunes:author': 'RSS Feed Combiner' },
-        { 'itunes:explicit': 'false' },
-        { 'itunes:type': 'episodic' },
-        { 'itunes:category': { _attr: { text: 'Technology' } } },
-        ...(feedImageUrl
-          ? [{ 'itunes:image': { _attr: { href: feedImageUrl } } }]
-          : []),
-      ],
-    });
 
     const feeds = config.feeds;
-    const defaultYear = config.defaultCutoff.year;
-    const defaultMonth = config.defaultCutoff.month;
-    const defaultDay = config.defaultCutoff.day;
-
     if (!options?.quiet) {
       console.log(`Found ${feeds.length} feeds to process`);
     }
@@ -366,13 +539,7 @@ export class XMLBuilder {
       options?.fetchFeedText ??
       (options?.cacheFeedBodies ? getPreviewFeedText : defaultFetchFeedText);
 
-    const allItems: {
-      item: CustomItem;
-      feedTitle: string;
-      feedUrl: string;
-      feedImage?: string;
-    }[] = [];
-
+    const allItems: MergedEpisode[] = [];
     const channelTitles: string[] = feeds.map(() => '');
     const previewMeta: {
       truncated: boolean;
@@ -384,47 +551,14 @@ export class XMLBuilder {
       await Promise.all(
         feeds.map(async (feedConfig, feedIndex) => {
           try {
-            const parsedFeed = await parseFeed(
-              feedConfig.url,
-              {
-                yearCutoff: feedConfig.cutoffYear
-                  ? Number.parseInt(feedConfig.cutoffYear, 10)
-                  : undefined,
-                defaultCutoffYear: Number.parseInt(defaultYear, 10),
-                mergeTimeline: feedConfig.mergeTimeline,
-              },
+            const { channelTitle, episodes } = await parseAndFilterFeed(
+              feedConfig,
+              config,
               fetchFeedText,
               { lightweight: options?.lightweight === true },
             );
-
-            const chTitle =
-              typeof parsedFeed.title === 'string'
-                ? parsedFeed.title
-                : String(parsedFeed.title ?? '');
-            channelTitles[feedIndex] = chTitle.trim();
-
-            parsedFeed.items.forEach((item) => {
-              if (item.pubDate) {
-                const pubDate = new Date(item.pubDateOriginal || '');
-                const cutoffDate = new Date(
-                  Number.parseInt(feedConfig.cutoffYear || defaultYear, 10),
-                  Number.parseInt(feedConfig.cutoffMonth || defaultMonth, 10) -
-                    1,
-                  Number.parseInt(feedConfig.cutoffDay || defaultDay, 10),
-                );
-                cutoffDate.setHours(0, 0, 0, 0);
-
-                if (cutoffDate >= pubDate) {
-                  return;
-                }
-                allItems.push({
-                  item,
-                  feedTitle: parsedFeed.title || '',
-                  feedUrl: feedConfig.url,
-                  feedImage: parsedFeed.image,
-                });
-              }
-            });
+            channelTitles[feedIndex] = channelTitle;
+            allItems.push(...episodes);
           } catch (error) {
             const message =
               error instanceof Error ? error.message : String(error);
@@ -444,83 +578,37 @@ export class XMLBuilder {
       const itemSlice = options?.itemSlice === 'oldest' ? 'oldest' : 'newest';
       previewMeta.total = allItems.length;
       previewMeta.slice = itemSlice;
-      const selected = selectPreviewItems(allItems, options?.maxItems, itemSlice);
+      const selected = selectPreviewItems(
+        allItems,
+        options?.maxItems,
+        itemSlice,
+      );
       previewMeta.truncated = selected.truncated;
       const itemsForOutput = selected.items;
 
-      if (itemsForOutput.length === 0) {
-        const emptyXml = feed.xml({ indent: true });
-        if (options?.includeFeedChannelTitles) {
-          return { xml: emptyXml, channelTitles };
-        }
-        return emptyXml;
-      }
-
-      let episode = 0;
-      let season = 1;
-      let currentSeasonMonth = new Date(
-        itemsForOutput[0].item.pubDate,
-      ).getUTCMonth();
-      itemsForOutput.forEach(({ item, feedTitle: srcFeedTitle, feedImage }) => {
-        const itemTitle = `${item.title || ''} - ${srcFeedTitle}`;
-        episode++;
-
-        const itemMonth = new Date(item.pubDate).getUTCMonth();
-        if (itemMonth !== currentSeasonMonth) {
-          season++;
-          currentSeasonMonth = itemMonth;
-        }
-
-        const imgEl = episodeItunesImageElements(
-          config.coverMode,
-          feedImageUrl,
-          item['itunes:image'] || '',
-          feedImage,
-        );
-
-        const body =
-          options?.lightweight === true
-            ? ''
-            : item.description || item.summary || '';
-        feed.item({
-          title: itemTitle,
-          description: body,
-          url: item.link || '',
-          guid: item.guid?.value || item.link || '',
-          date: new Date(item.pubDate || ''),
-          enclosure: item.enclosure,
-          custom_elements: [
-            { 'itunes:title': itemTitle },
-            { 'itunes:duration': item['itunes:duration'] || '' },
-            { 'itunes:summary': body },
-            { 'itunes:episodeType': item['itunes:episodeType'] || 'full' },
-            { 'itunes:explicit': item['itunes:explicit'] || 'false' },
-            { 'itunes:season': item['itunes:season'] || season },
-            { 'itunes:episode': item['itunes:episode'] || episode },
-            { pubDateOriginal: item.pubDateOriginal },
-            imgEl,
-          ].filter(Boolean),
-        });
+      const feed = createRssChannel(config);
+      appendEpisodesToRss(feed, config, itemsForOutput, {
+        lightweight: options?.lightweight,
       });
+
+      const xmlOut = feed.xml({ indent: !previewMeta.truncated });
+      if (options?.includeFeedChannelTitles) {
+        return {
+          xml: xmlOut,
+          channelTitles,
+          ...(previewMeta.truncated
+            ? {
+                previewTruncated: true,
+                previewTotalItems: previewMeta.total,
+                previewSlice: previewMeta.slice,
+              }
+            : {}),
+        };
+      }
+      return xmlOut;
     } catch (error) {
       console.error('Error processing feeds:', error);
       throw error;
     }
-
-    const xmlOut = feed.xml({ indent: !previewMeta.truncated });
-    if (options?.includeFeedChannelTitles) {
-      return {
-        xml: xmlOut,
-        channelTitles,
-        ...(previewMeta.truncated
-          ? {
-              previewTruncated: true,
-              previewTotalItems: previewMeta.total,
-              previewSlice: previewMeta.slice,
-            }
-          : {}),
-      };
-    }
-    return xmlOut;
   }
 }

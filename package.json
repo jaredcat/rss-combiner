@@ -40,6 +40,7 @@
     "wrangler": "wrangler",
     "setup": "bun run scripts/setup.ts",
     "ensure-kv-ci": "bun run scripts/ensure-kv-ci.ts",
+    "ensure-queue-ci": "bun run scripts/ensure-queue-ci.ts",
     "upload-cover": "bun run scripts/upload-cover.ts",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",

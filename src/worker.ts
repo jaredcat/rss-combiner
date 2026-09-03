@@ -1,6 +1,8 @@
 import type {
   ExecutionContext,
   KVNamespace,
+  MessageBatch,
+  Queue,
   R2Bucket,
   ScheduledEvent,
 } from '@cloudflare/workers-types';
@@ -15,11 +17,19 @@ import {
   type AppConfig,
 } from './config';
 import { clearPreviewFeedMemoryCache } from './feedFetch';
+import {
+  getRebuildStatus,
+  handleRebuildQueueBatch,
+  rebuildStatusFlash,
+  startRebuild,
+  type RebuildMessage,
+} from './rebuild';
 import { XMLBuilder } from './xmlBuilder';
 
 export interface Env {
   XML_BUCKET: R2Bucket;
   CONFIG_KV?: KVNamespace;
+  REBUILD_QUEUE: Queue<RebuildMessage>;
   /** Required for /admin UI; set with `wrangler secret put ADMIN_SECRET` */
   ADMIN_SECRET?: string;
   /** Public base for R2 object URLs, e.g. https://your-bucket.r2.dev (no trailing slash). Used for cover upload + FEED_IMAGE_URL hint. */
@@ -30,7 +40,7 @@ export interface Env {
   DEFAULT_CUTOFF_DATE_MONTH: string;
   DEFAULT_CUTOFF_DATE_YEAR: string;
   FEED_INDEX_PADDING: string;
-  [key: string]: string | R2Bucket | KVNamespace | undefined;
+  [key: string]: string | R2Bucket | KVNamespace | Queue<RebuildMessage> | undefined;
 }
 
 async function hexSha256(secret: string): Promise<string> {
@@ -158,14 +168,6 @@ function appConfigFromFormData(form: FormData, env: Env): AppConfig {
   };
 }
 
-async function generateXml(
-  env: Env,
-  options?: { quiet?: boolean },
-): Promise<string> {
-  const config = await resolveConfig(env, env.CONFIG_KV);
-  return XMLBuilder.fetchXml(config, options);
-}
-
 type RequestContext = {
   url: URL;
   secureCookie: boolean;
@@ -234,22 +236,6 @@ async function requireAdmin(
   }
   if (!(await isAdminAuthenticated(request, env))) {
     return unauthorized;
-  }
-}
-
-async function putPodcastsXml(env: Env, xml: string): Promise<void> {
-  await env.XML_BUCKET.put('podcasts.xml', xml, {
-    httpMetadata: { contentType: 'application/xml' },
-  });
-}
-
-async function regeneratePodcastsXmlQuiet(env: Env): Promise<void> {
-  try {
-    const xml = await generateXml(env, { quiet: true });
-    await putPodcastsXml(env, xml);
-    console.log('Background podcasts.xml regenerate finished');
-  } catch (error) {
-    console.error('Background podcasts.xml regenerate failed:', error);
   }
 }
 
@@ -383,7 +369,6 @@ async function handleUploadCover(
 async function handleAdminSave(
   request: Request,
   env: Env,
-  ctx: RequestContext,
 ): Promise<Response> {
   const denied = await requireAdmin(
     request,
@@ -408,9 +393,8 @@ async function handleAdminSave(
       CONFIG_KV_KEY,
       JSON.stringify(appConfigToStored(config)),
     );
-    // Full rebuild can exceed fetch CPU limits (Error 1102). Return after KV
-    // write and finish R2 in the background; hourly cron is the fallback.
-    ctx.executionCtx.waitUntil(regeneratePodcastsXmlQuiet(env));
+    // Full rebuild runs as a chain of queue jobs (one feed per invocation).
+    await startRebuild(env);
     return redirect('/admin?saved=1');
   } catch (error) {
     const current = await resolveConfig(env, env.CONFIG_KV);
@@ -436,28 +420,37 @@ async function handleAdminGet(
   }
   const config = await resolveConfig(env, env.CONFIG_KV);
   const saved = ctx.url.searchParams.get('saved') === '1';
+  const rebuild = await getRebuildStatus(env);
   return htmlResponse(
     adminFormHtml(
       config,
-      saved
-        ? 'Saved to KV. Rebuilding /podcasts.xml in the background (may take a minute on large feeds).'
-        : undefined,
+      rebuildStatusFlash(rebuild, { saved }),
       adminPageContext(request, env),
     ),
   );
 }
 
 async function handleDeployTrigger(
-  _request: Request,
+  request: Request,
   env: Env,
 ): Promise<Response> {
+  const denied = await requireAdmin(
+    request,
+    env,
+    new Response('Unauthorized', { status: 401 }),
+  );
+  if (denied) {
+    return denied;
+  }
   try {
-    const xml = await generateXml(env, { quiet: false });
-    await putPodcastsXml(env, xml);
-    return new Response('XML generated successfully', { status: 200 });
+    const status = await startRebuild(env);
+    return new Response(
+      `Rebuild queued (job ${status.jobId}). /podcasts.xml updates when the job finishes.`,
+      { status: 200 },
+    );
   } catch (error) {
     return new Response(
-      `Failed to generate XML: ${errorMessage(error, 'Unknown error')}`,
+      `Failed to queue rebuild: ${errorMessage(error, 'Unknown error')}`,
       { status: 500 },
     );
   }
@@ -531,14 +524,17 @@ function getRouteHandler(method: string, path: string): RouteHandler | undefined
 }
 
 export default {
-  async scheduled(event: ScheduledEvent, env: Env, _ctx: ExecutionContext) {
+  async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext) {
     try {
-      const xml = await generateXml(env, { quiet: false });
-      await putPodcastsXml(env, xml);
-      console.log('XML file updated successfully');
+      const status = await startRebuild(env);
+      console.log(`Rebuild queued (job ${status.jobId})`);
     } catch (error) {
-      console.error('Error in scheduled task:', error);
+      console.error('Error queueing scheduled rebuild:', error);
     }
+  },
+
+  async queue(batch: MessageBatch<RebuildMessage>, env: Env) {
+    await handleRebuildQueueBatch(batch, env);
   },
 
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {

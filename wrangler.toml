@@ -14,6 +14,19 @@ bucket_name = "your-podcasts-xml"  # TODO: Change this to your unique bucket nam
 binding = "CONFIG_KV"
 id = "00000000000000000000000000000000"  # Replaced automatically in CI, or paste a real id for local wrangler dev
 
+# Sequential rebuild: one queue message ≈ one source feed, then finalize → podcasts.xml.
+# CI creates the queue and syncs the name from `name` above (rss-combiner-rebuild-<worker-name>).
+# Queues require Workers Paid to enable (free ops allotment after that). See docs/github-actions-setup.md.
+[[queues.producers]]
+binding = "REBUILD_QUEUE"
+queue = "rss-combiner-rebuild-your-podcast-feed-generator"
+
+[[queues.consumers]]
+queue = "rss-combiner-rebuild-your-podcast-feed-generator"
+max_batch_size = 1
+max_retries = 5
+retry_delay = 60
+
 [triggers]
 crons = ["0 */1 * * *"]  # Updates every hour - adjust as needed
 

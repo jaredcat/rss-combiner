@@ -24,14 +24,15 @@ Create a throwaway repo from the template, add the same secrets, push. Same beha
 From a clone with your branch checked out:
 
 ```bash
-export CLOUDFLARE_API_TOKEN="..."   # Workers + KV + R2
+export CLOUDFLARE_API_TOKEN="..."   # Workers + KV + R2 + Queues
 export CLOUDFLARE_ACCOUNT_ID="..."  # if your token sees multiple accounts
 
 bun install
 bun run ensure-kv-ci
+bun run ensure-queue-ci
 ```
 
-That patches `wrangler.toml` **on disk** if the KV id is still the placeholder (same as CI). Then:
+That patches `wrangler.toml` **on disk** if the KV id is still the placeholder and syncs the rebuild queue name (same as CI). Queues usually need **Workers Paid**. Then:
 
 ```bash
 bunx wrangler deploy

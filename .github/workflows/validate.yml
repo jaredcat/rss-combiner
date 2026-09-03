@@ -55,4 +55,9 @@ jobs:
             echo "Note: KV id is still the placeholder — GitHub Actions will create the namespace on deploy. For local wrangler dev, create a KV namespace and paste its id, or deploy once and copy the id from the workflow log."
           fi
 
+          if ! grep -q '\[\[queues.producers\]\]' wrangler.toml || ! grep -q '\[\[queues.consumers\]\]' wrangler.toml; then
+            echo "Error: wrangler.toml is missing Queues producer/consumer bindings for rebuilds."
+            exit 1
+          fi
+
           echo "Validation finished."
