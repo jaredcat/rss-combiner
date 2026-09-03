@@ -315,12 +315,27 @@ async function handleAdminPreview(
       clearPreviewFeedMemoryCache();
     }
     const config = appConfigFromFormData(form, env);
-    const { xml, channelTitles } = await XMLBuilder.fetchXml(config, {
+    // Full feeds can be multi‑MB; returning that as JSON OOMs / exceeds limits.
+    // Preview returns a 40-episode slice (cron/save still build the full feed).
+    const PREVIEW_MAX_ITEMS = 40;
+    const itemSlice =
+      form.get('previewSlice')?.toString() === 'oldest' ? 'oldest' : 'newest';
+    const result = await XMLBuilder.fetchXml(config, {
       quiet: true,
       cacheFeedBodies: !bypass,
       includeFeedChannelTitles: true,
+      maxItems: PREVIEW_MAX_ITEMS,
+      itemSlice,
     });
-    return jsonResponse({ ok: true, xml, channelTitles });
+    return jsonResponse({
+      ok: true,
+      xml: result.xml,
+      channelTitles: result.channelTitles,
+      previewTruncated: result.previewTruncated === true,
+      previewTotalItems: result.previewTotalItems,
+      previewMaxItems: PREVIEW_MAX_ITEMS,
+      previewSlice: result.previewSlice ?? itemSlice,
+    });
   } catch (error) {
     return jsonError(errorMessage(error, 'Preview failed'), 400);
   }
