@@ -47,6 +47,7 @@
     "build": "wrangler build",
     "generate": "bun run scripts/generate-xml.ts > podcasts.xml",
     "test-local": "bun run scripts/generate-xml.ts | head -50",
+    "test": "bun test",
     "lint": "eslint . && tsc --noEmit",
     "lint:fix": "eslint . --fix && tsc --noEmit"
   },

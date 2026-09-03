@@ -140,8 +140,12 @@ async function ensureQueue(
   await createQueue(accountId, token, queueName);
 }
 
-/** One TOML array-of-tables section starting at `[[header]]`, ending before the next `[[`. */
-function eachTomlTableBlock(
+/**
+ * One TOML array-of-tables section starting at `[[header]]` and ending before
+ * the next table header of any kind (`[[x]]` or `[x]`), so a block can never
+ * absorb a sibling section's keys.
+ */
+export function eachTomlTableBlock(
   content: string,
   header: '[[queues.producers]]' | '[[queues.consumers]]',
 ): Array<{ start: number; end: number; body: string }> {
@@ -153,7 +157,7 @@ function eachTomlTableBlock(
       break;
     }
     const afterHeader = start + header.length;
-    const nextTable = content.indexOf('\n[[', afterHeader);
+    const nextTable = content.indexOf('\n[', afterHeader);
     const end = nextTable < 0 ? content.length : nextTable;
     blocks.push({ start, end, body: content.slice(start, end) });
     from = afterHeader;
@@ -187,7 +191,10 @@ function blockHasBinding(block: string, bindingName: string): boolean {
  * Sync only the REBUILD_QUEUE producer `queue = "..."` and any consumer that
  * already points at that same queue name. Leaves other queue bindings alone.
  */
-function patchWranglerQueueNames(content: string, queueName: string): string {
+export function patchWranglerQueueNames(
+  content: string,
+  queueName: string,
+): string {
   const producerBlocks = eachTomlTableBlock(content, '[[queues.producers]]');
   if (producerBlocks.length === 0) {
     console.error('wrangler.toml is missing [[queues.producers]]; refusing to patch.');
@@ -296,9 +303,12 @@ async function main() {
   }
 }
 
-try {
-  await main();
-} catch (e) {
-  console.error(e);
-  process.exit(1);
+// Guarded so the pure helpers above can be imported by tests without running CI work.
+if (import.meta.main) {
+  try {
+    await main();
+  } catch (e) {
+    console.error(e);
+    process.exit(1);
+  }
 }

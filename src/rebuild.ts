@@ -74,12 +74,73 @@ function shardPrefix(jobId: string): string {
   return `rebuild/${jobId}/`;
 }
 
+/**
+ * Sorts before any real timestamp so a job of unknown age can never win a
+ * publication claim against a job with a known `createdAt`.
+ */
+const UNKNOWN_CREATED_AT = new Date(0).toISOString();
+
+/**
+ * Strict: a payload without `jobId` + `status` is not a status record. This
+ * keeps the `{ jobId, createdAt }` pointer from being read as a half-empty
+ * status whose missing `createdAt` would disable publish ordering.
+ */
 function parseStatus(raw: string | null): RebuildStatus | null {
   if (!raw) {
     return null;
   }
   try {
-    return JSON.parse(raw) as RebuildStatus;
+    const parsed = JSON.parse(raw) as Partial<RebuildStatus> | null;
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      typeof parsed.jobId !== 'string' ||
+      typeof parsed.status !== 'string'
+    ) {
+      return null;
+    }
+    return {
+      jobId: parsed.jobId,
+      status: parsed.status as RebuildJobStatus,
+      totalFeeds: typeof parsed.totalFeeds === 'number' ? parsed.totalFeeds : 0,
+      feedIndex: typeof parsed.feedIndex === 'number' ? parsed.feedIndex : 0,
+      createdAt: typeof parsed.createdAt === 'string' ? parsed.createdAt : '',
+      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : '',
+      ...(typeof parsed.error === 'string' ? { error: parsed.error } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Current-job pointer. Carries `createdAt` so publish ordering survives a stale
+ * read of the per-job record (KV reads are eventually consistent).
+ */
+function parseCurrentPointer(
+  raw: string | null,
+): { jobId: string; createdAt: string } | null {
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as {
+      jobId?: unknown;
+      createdAt?: unknown;
+      updatedAt?: unknown;
+    } | null;
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      typeof parsed.jobId !== 'string'
+    ) {
+      return null;
+    }
+    const candidates = [parsed.createdAt, parsed.updatedAt];
+    const createdAt = candidates.find(
+      (value): value is string => typeof value === 'string' && value !== '',
+    );
+    return { jobId: parsed.jobId, createdAt: createdAt ?? '' };
   } catch {
     return null;
   }
@@ -107,30 +168,37 @@ export async function getRebuildStatus(
     return null;
   }
   const pointerRaw = await env.CONFIG_KV.get(REBUILD_CURRENT_KV_KEY);
-  if (!pointerRaw) {
+  const pointer = parseCurrentPointer(pointerRaw);
+  if (!pointer) {
     return null;
   }
-  try {
-    const pointer = JSON.parse(pointerRaw) as
-      | { jobId?: string }
-      | RebuildStatus;
-    if (
-      !pointer ||
-      typeof pointer !== 'object' ||
-      typeof pointer.jobId !== 'string'
-    ) {
-      return null;
-    }
-    // Prefer per-job record; fall back to legacy single-key payload for one deploy.
-    const jobRaw = await env.CONFIG_KV.get(jobStatusKey(pointer.jobId));
-    const fromJob = parseStatus(jobRaw);
-    if (fromJob) {
-      return fromJob;
-    }
-    return parseStatus(pointerRaw);
-  } catch {
-    return null;
+
+  const withPointerAge = (status: RebuildStatus): RebuildStatus => ({
+    ...status,
+    createdAt: status.createdAt || pointer.createdAt || UNKNOWN_CREATED_AT,
+  });
+
+  const fromJob = parseStatus(await env.CONFIG_KV.get(jobStatusKey(pointer.jobId)));
+  if (fromJob?.jobId === pointer.jobId) {
+    return withPointerAge(fromJob);
   }
+
+  // Legacy single-key payload (pre-split), readable for one deploy.
+  const legacy = parseStatus(pointerRaw);
+  if (legacy?.jobId === pointer.jobId) {
+    return withPointerAge(legacy);
+  }
+
+  // Pointer is visible but the job record is not yet. Synthesize rather than
+  // returning a partial record, so `createdAt` is never undefined downstream.
+  return {
+    jobId: pointer.jobId,
+    status: 'queued',
+    totalFeeds: 0,
+    feedIndex: 0,
+    createdAt: pointer.createdAt || UNKNOWN_CREATED_AT,
+    updatedAt: pointer.createdAt || UNKNOWN_CREATED_AT,
+  };
 }
 
 async function requireCurrentJob(
@@ -145,7 +213,7 @@ async function requireCurrentJob(
 }
 
 function jobCreatedAt(status: RebuildStatus): string {
-  return status.createdAt || status.updatedAt;
+  return status.createdAt || status.updatedAt || UNKNOWN_CREATED_AT;
 }
 
 /** Return <0 if a is older than b, >0 if newer, 0 if same claim. */
@@ -189,7 +257,9 @@ async function readPublishedPointer(env: RebuildEnv): Promise<{
   }
   return {
     value: parsePublishedPointer(await obj.text()),
-    etag: obj.httpEtag,
+    // Raw etag, not `httpEtag`: R2 rejects a quoted etag in `onlyIf` with a
+    // TypeError ("Conditional ETag should not be wrapped in quotes").
+    etag: obj.etag,
   };
 }
 
@@ -203,11 +273,15 @@ async function getPublishedJobId(env: RebuildEnv): Promise<string | null> {
  * Returns false if a newer (or equal-and-other) job already owns publish, or
  * if this job is no longer current.
  */
-async function claimPublishedPointer(
+export async function claimPublishedPointer(
   env: RebuildEnv,
   jobId: string,
   createdAt: string,
 ): Promise<boolean> {
+  // Never write a pointer without an age; that would disable ordering for
+  // every later claimant, since `parsePublishedPointer` would reject it.
+  const claimCreatedAt = createdAt || UNKNOWN_CREATED_AT;
+
   for (let attempt = 0; attempt < 5; attempt++) {
     if (!(await requireCurrentJob(env, jobId))) {
       return false;
@@ -219,7 +293,12 @@ async function claimPublishedPointer(
         return true;
       }
       if (
-        comparePublishAge(createdAt, jobId, value.createdAt, value.jobId) <= 0
+        comparePublishAge(
+          claimCreatedAt,
+          jobId,
+          value.createdAt,
+          value.jobId,
+        ) <= 0
       ) {
         return false;
       }
@@ -227,7 +306,7 @@ async function claimPublishedPointer(
 
     const payload = JSON.stringify({
       jobId,
-      createdAt,
+      createdAt: claimCreatedAt,
     } satisfies PublishedPointer);
 
     const result = await env.XML_BUCKET.put(REBUILD_PUBLISHED_R2_KEY, payload, {
@@ -334,8 +413,12 @@ export async function startRebuild(env: RebuildEnv): Promise<RebuildStatus> {
     updatedAt: now,
   };
   await putJobStatus(env, status);
-  // Pointer last so readers never see a new id without a job record.
-  await env.CONFIG_KV.put(REBUILD_CURRENT_KV_KEY, JSON.stringify({ jobId }));
+  // Pointer last so readers never see a new id without a job record. It carries
+  // `createdAt` so publish ordering holds even if the job record read is stale.
+  await env.CONFIG_KV.put(
+    REBUILD_CURRENT_KV_KEY,
+    JSON.stringify({ jobId, createdAt: now }),
+  );
 
   if (totalFeeds === 0) {
     await env.REBUILD_QUEUE.send({ type: 'finalize', jobId });

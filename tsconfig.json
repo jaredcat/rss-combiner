@@ -21,7 +21,8 @@
     "noFallthroughCasesInSwitch": true,
 
     // Scripts import node: builtins; without this, TS treats `node:fs/promises` as a name.
-    "types": ["node"],
+    // "bun" supplies `bun:test` and `import.meta.main`.
+    "types": ["node", "bun"],
 
     // Some stricter flags (disabled by default)
     "noUnusedLocals": false,
