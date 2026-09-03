@@ -111,8 +111,14 @@ export async function getRebuildStatus(
     return null;
   }
   try {
-    const pointer = JSON.parse(pointerRaw) as { jobId?: string } | RebuildStatus;
-    if (!pointer || typeof pointer !== 'object' || typeof pointer.jobId !== 'string') {
+    const pointer = JSON.parse(pointerRaw) as
+      | { jobId?: string }
+      | RebuildStatus;
+    if (
+      !pointer ||
+      typeof pointer !== 'object' ||
+      typeof pointer.jobId !== 'string'
+    ) {
       return null;
     }
     // Prefer per-job record; fall back to legacy single-key payload for one deploy.
@@ -132,7 +138,7 @@ async function requireCurrentJob(
   jobId: string,
 ): Promise<RebuildStatus | null> {
   const current = await getRebuildStatus(env);
-  if (!current || current.jobId !== jobId) {
+  if (current?.jobId !== jobId) {
     return null;
   }
   return current;
@@ -226,9 +232,7 @@ async function claimPublishedPointer(
 
     const result = await env.XML_BUCKET.put(REBUILD_PUBLISHED_R2_KEY, payload, {
       httpMetadata: { contentType: 'application/json' },
-      onlyIf: etag
-        ? { etagMatches: etag }
-        : { etagDoesNotMatch: '*' },
+      onlyIf: etag ? { etagMatches: etag } : { etagDoesNotMatch: '*' },
     });
 
     // null => precondition failed (someone else wrote).
@@ -331,10 +335,7 @@ export async function startRebuild(env: RebuildEnv): Promise<RebuildStatus> {
   };
   await putJobStatus(env, status);
   // Pointer last so readers never see a new id without a job record.
-  await env.CONFIG_KV.put(
-    REBUILD_CURRENT_KV_KEY,
-    JSON.stringify({ jobId }),
-  );
+  await env.CONFIG_KV.put(REBUILD_CURRENT_KV_KEY, JSON.stringify({ jobId }));
 
   if (totalFeeds === 0) {
     await env.REBUILD_QUEUE.send({ type: 'finalize', jobId });
@@ -382,9 +383,13 @@ async function processFeed(
   const feedConfig = config.feeds[feedIndex];
   const { episodes } = await parseAndFilterFeed(feedConfig, config);
   const payload = serializeMergedEpisodes(episodes);
-  await env.XML_BUCKET.put(shardKey(jobId, feedIndex), JSON.stringify(payload), {
-    httpMetadata: { contentType: 'application/json' },
-  });
+  await env.XML_BUCKET.put(
+    shardKey(jobId, feedIndex),
+    JSON.stringify(payload),
+    {
+      httpMetadata: { contentType: 'application/json' },
+    },
+  );
 
   if (!(await requireCurrentJob(env, jobId))) {
     return;
@@ -415,7 +420,7 @@ async function loadJobEpisodes(
     }
     const parsed = JSON.parse(await obj.text()) as SerializedMergedEpisode[];
     if (!Array.isArray(parsed)) {
-      throw new Error(`Invalid rebuild shard JSON for feed index ${i}`);
+      throw new TypeError(`Invalid rebuild shard JSON for feed index ${i}`);
     }
     allSerialized.push(...parsed);
   }
@@ -447,7 +452,10 @@ async function publishJobFeed(
   return true;
 }
 
-async function finishReadyCleanup(env: RebuildEnv, jobId: string): Promise<void> {
+async function finishReadyCleanup(
+  env: RebuildEnv,
+  jobId: string,
+): Promise<void> {
   try {
     await deleteFeedShards(env, jobId);
   } catch (error) {
@@ -540,7 +548,12 @@ async function markFailed(
   if (!current) {
     return;
   }
-  const message = error instanceof Error ? error.message : String(error);
+  let message = 'Unknown error';
+  if (error instanceof Error) {
+    message = error.message;
+  } else if (typeof error === 'string') {
+    message = error;
+  }
   await putJobStatus(env, {
     ...current,
     status: 'failed',
@@ -631,9 +644,7 @@ export function rebuildStatusFlash(
   }
   switch (status.status) {
     case 'queued':
-      return saved
-        ? 'Saved. Rebuild queued…'
-        : 'Rebuild queued…';
+      return saved ? 'Saved. Rebuild queued…' : 'Rebuild queued…';
     case 'running':
       return saved ? 'Saved. Rebuild running…' : 'Rebuild running…';
     case 'failed':

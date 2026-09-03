@@ -140,55 +140,110 @@ async function ensureQueue(
   await createQueue(accountId, token, queueName);
 }
 
+/** One TOML array-of-tables section starting at `[[header]]`, ending before the next `[[`. */
+function eachTomlTableBlock(
+  content: string,
+  header: '[[queues.producers]]' | '[[queues.consumers]]',
+): Array<{ start: number; end: number; body: string }> {
+  const blocks: Array<{ start: number; end: number; body: string }> = [];
+  let from = 0;
+  for (;;) {
+    const start = content.indexOf(header, from);
+    if (start < 0) {
+      break;
+    }
+    const afterHeader = start + header.length;
+    const nextTable = content.indexOf('\n[[', afterHeader);
+    const end = nextTable < 0 ? content.length : nextTable;
+    blocks.push({ start, end, body: content.slice(start, end) });
+    from = afterHeader;
+  }
+  return blocks;
+}
+
+function queueAssignmentInBlock(block: string): string | null {
+  const match = /^queue\s*=\s*"([^"]*)"/m.exec(block);
+  return match ? match[1] : null;
+}
+
+function replaceQueueAssignment(block: string, queueName: string): string {
+  if (!/^queue\s*=\s*"[^"]*"/m.test(block)) {
+    return block;
+  }
+  return block.replace(/^queue\s*=\s*"[^"]*"/m, `queue = "${queueName}"`);
+}
+
+function blockHasBinding(block: string, bindingName: string): boolean {
+  for (const line of block.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed === `binding = "${bindingName}"`) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Sync only the REBUILD_QUEUE producer `queue = "..."` and any consumer that
  * already points at that same queue name. Leaves other queue bindings alone.
  */
 function patchWranglerQueueNames(content: string, queueName: string): string {
-  if (!content.includes('[[queues.producers]]')) {
+  const producerBlocks = eachTomlTableBlock(content, '[[queues.producers]]');
+  if (producerBlocks.length === 0) {
     console.error('wrangler.toml is missing [[queues.producers]]; refusing to patch.');
     process.exit(1);
   }
-  if (!content.includes('[[queues.consumers]]')) {
-    console.error('wrangler.toml is missing [[queues.consumers]]; refusing to patch.');
-    process.exit(1);
-  }
 
-  const producerBlockRe =
-    /\[\[queues\.producers\]\][^[]*?binding\s*=\s*"REBUILD_QUEUE"[^[]*/s;
-  const producerMatch = producerBlockRe.exec(content);
-  if (!producerMatch) {
+  const rebuildProducers = producerBlocks.filter((b) =>
+    blockHasBinding(b.body, 'REBUILD_QUEUE'),
+  );
+  if (rebuildProducers.length === 0) {
     console.error(
       'wrangler.toml is missing [[queues.producers]] with binding = "REBUILD_QUEUE"',
     );
     process.exit(1);
   }
+  if (rebuildProducers.length > 1) {
+    console.error(
+      'wrangler.toml has multiple REBUILD_QUEUE producers; refusing to patch ambiguously.',
+    );
+    process.exit(1);
+  }
 
-  const producerBlock = producerMatch[0];
-  const oldQueueMatch = /^queue\s*=\s*"([^"]*)"/m.exec(producerBlock);
-  if (!oldQueueMatch) {
+  const rebuildProducer = rebuildProducers[0];
+  const oldQueueName = queueAssignmentInBlock(rebuildProducer.body);
+  if (oldQueueName == null) {
     console.error(
       'REBUILD_QUEUE producer block is missing a queue = "..." line',
     );
     process.exit(1);
   }
-  const oldQueueName = oldQueueMatch[1];
 
-  let patched = content.replace(producerBlockRe, (block) =>
-    block.replace(/^queue\s*=\s*"[^"]*"/m, `queue = "${queueName}"`),
-  );
+  let patched =
+    content.slice(0, rebuildProducer.start) +
+    replaceQueueAssignment(rebuildProducer.body, queueName) +
+    content.slice(rebuildProducer.end);
 
-  // Update consumers that still reference the previous rebuild queue name only.
-  const consumerBlockRe = /\[\[queues\.consumers\]\][^[]*/g;
+  const consumerBlocks = eachTomlTableBlock(patched, '[[queues.consumers]]');
+  if (consumerBlocks.length === 0) {
+    console.error('wrangler.toml is missing [[queues.consumers]]; refusing to patch.');
+    process.exit(1);
+  }
+
   let consumerPatches = 0;
-  patched = patched.replace(consumerBlockRe, (block) => {
-    const q = /^queue\s*=\s*"([^"]*)"/m.exec(block);
-    if (!q || (q[1] !== oldQueueName && q[1] !== queueName)) {
-      return block;
+  // Apply from the end so earlier offsets stay valid.
+  for (let i = consumerBlocks.length - 1; i >= 0; i--) {
+    const block = consumerBlocks[i];
+    const q = queueAssignmentInBlock(block.body);
+    if (q !== oldQueueName && q !== queueName) {
+      continue;
     }
     consumerPatches += 1;
-    return block.replace(/^queue\s*=\s*"[^"]*"/m, `queue = "${queueName}"`);
-  });
+    patched =
+      patched.slice(0, block.start) +
+      replaceQueueAssignment(block.body, queueName) +
+      patched.slice(block.end);
+  }
 
   if (consumerPatches < 1) {
     console.error(

@@ -309,7 +309,7 @@ async function handleAdminPreview(
     // Preview returns a 40-episode slice (cron/save still build the full feed).
     const PREVIEW_MAX_ITEMS = 40;
     const itemSlice =
-      form.get('previewSlice')?.toString() === 'oldest' ? 'oldest' : 'newest';
+      formText(form, 'previewSlice') === 'oldest' ? 'oldest' : 'newest';
     const result = await XMLBuilder.fetchXml(config, {
       quiet: true,
       cacheFeedBodies: !bypass,
