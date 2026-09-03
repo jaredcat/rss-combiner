@@ -38,6 +38,33 @@ type CustomItem = {
   sortDate: Date;
 };
 
+function compareStrings(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
+/** Date first; ties use guid/link/title/source so Promise.all finish order cannot reshuffle. */
+function compareItems(
+  a: CustomItem,
+  b: CustomItem,
+  aSource = '',
+  bSource = '',
+): number {
+  const byDate = a.sortDate.getTime() - b.sortDate.getTime();
+  if (byDate !== 0) return byDate;
+
+  const byGuid = compareStrings(a.guid?.value || '', b.guid?.value || '');
+  if (byGuid !== 0) return byGuid;
+
+  const byLink = compareStrings(a.link || '', b.link || '');
+  if (byLink !== 0) return byLink;
+
+  const byTitle = compareStrings(a.title || '', b.title || '');
+  if (byTitle !== 0) return byTitle;
+
+  return compareStrings(aSource, bSource);
+}
+
 async function parseFeed(
   url: string,
   feedConfig: {
@@ -130,10 +157,7 @@ async function parseFeed(
         },
       ];
     })
-    .sort(
-      (ep1: CustomItem, ep2: CustomItem) =>
-        ep1.sortDate.getTime() - ep2.sortDate.getTime(),
-    );
+    .sort((ep1: CustomItem, ep2: CustomItem) => compareItems(ep1, ep2));
 
   return {
     title: channel.title || '',
@@ -259,6 +283,7 @@ export class XMLBuilder {
     const allItems: {
       item: CustomItem;
       feedTitle: string;
+      feedUrl: string;
       feedImage?: string;
     }[] = [];
 
@@ -303,6 +328,7 @@ export class XMLBuilder {
                 allItems.push({
                   item,
                   feedTitle: parsedFeed.title || '',
+                  feedUrl: feedConfig.url,
                   feedImage: parsedFeed.image,
                 });
               }
@@ -318,8 +344,8 @@ export class XMLBuilder {
         }),
       );
 
-      allItems.sort(
-        (a, b) => a.item.sortDate.getTime() - b.item.sortDate.getTime(),
+      allItems.sort((a, b) =>
+        compareItems(a.item, b.item, a.feedUrl, b.feedUrl),
       );
 
       if (allItems.length === 0) {
