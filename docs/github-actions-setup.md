@@ -33,9 +33,12 @@ When you **create a repository from the template**, your repo has a **different 
    | Account — **Workers Scripts** | Edit |
    | Account — **Workers KV Storage** | Edit |
    | Account — **Workers R2 Storage** | Edit |
+   | Account — **Queues** | Edit |
    | Account — **Account Settings** | Read (optional; helps some accounts resolve correctly) |
 
    Under **Account Resources**, choose **Include** → **All accounts** (or pick the account that should host the Worker).
+
+   **Queues / Workers Paid:** Creating and using Queues typically requires **Workers Paid** (~$5/mo) to enable Queues on the account. After that, Queues have a free operations allotment. Free-tier-only accounts can still use `bun run generate` locally and serve a static `podcasts.xml`, but Save / cron / `/deploy-trigger` rebuilds need Queues.
 
 6. **Continue to summary** → **Create Token** and copy the token once (you will not see it again).
 
@@ -68,6 +71,7 @@ Commit to the **`main`** branch. That push starts the **Deploy RSS Combiner** wo
 The workflow will:
 
 - Create or reuse a **KV namespace** for `/admin` (you can keep the placeholder `id` in git — CI patches it during the job).
+- Create or reuse a **Queue** named `rss-combiner-rebuild-&lt;worker-name&gt;` for resilient feed rebuilds (and sync that name in `wrangler.toml` for the job).
 - Create the **R2 bucket** if it does not exist.
 - **Deploy** the Worker.
 - Upload `cover.jpg` / `cover.png` from the repo root if present.
@@ -81,7 +85,7 @@ The workflow will:
 
 2. Sign in with the password you stored in `ADMIN_SECRET`.
 3. Set **Public base URL** to your Worker URL (same origin, e.g. `https://&lt;name&gt;.workers.dev`).
-4. Add RSS URLs for your podcasts and **Save**. The combined feed is written to **`/podcasts.xml`** on save (and refreshed on the hourly cron).
+4. Add RSS URLs for your podcasts and **Save**. That queues a rebuild; refresh `/admin` for ready / rebuilding / failed. The combined feed is at **`/podcasts.xml`** when the job finishes (hourly cron also enqueues rebuilds).
 
 ### Cover image and R2
 
@@ -100,8 +104,10 @@ The workflow will:
 
 | Problem | What to try |
 |--------|-------------|
-| Deploy fails with auth / account errors | Confirm `CLOUDFLARE_API_TOKEN` permissions; add `CLOUDFLARE_ACCOUNT_ID` if you have multiple accounts. |
+| Deploy fails with auth / account errors | Confirm `CLOUDFLARE_API_TOKEN` permissions (including **Queues Edit**); add `CLOUDFLARE_ACCOUNT_ID` if you have multiple accounts. |
+| Deploy fails creating a Queue | Enable Queues / upgrade to **Workers Paid**, then re-run deploy. |
 | `/admin` says disabled | Add `ADMIN_SECRET` in GitHub secrets and re-run deploy, or run `wrangler secret put ADMIN_SECRET` after a local deploy. |
 | Bucket or Worker name taken | Change `name` / `bucket_name` in `wrangler.toml` to something unique. |
+| Save succeeds but `/podcasts.xml` is stale | Wait for the queue job; refresh `/admin` for rebuild status. Check Workers logs for queue consumer errors. |
 
-For local development (Wrangler, `bun run dev`), create a KV namespace once and put its id in `wrangler.toml`, or copy the id from a successful GitHub Actions log after the first deploy.
+For local development (Wrangler, `bun run dev`), create a KV namespace once and put its id in `wrangler.toml`, or copy the id from a successful GitHub Actions log after the first deploy. Queue bindings work with `wrangler.dev`; create the queue once (`bun run ensure-queue-ci` or `wrangler queues create …`) if you have not deployed yet.

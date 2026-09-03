@@ -25,11 +25,11 @@ The easiest way to deploy your RSS combiner is entirely through GitHub Actions:
 
 **Summary:**
 
-1. [Create a Cloudflare account](https://dash.cloudflare.com/sign-up) and an API token (Workers + KV + R2).
+1. [Create a Cloudflare account](https://dash.cloudflare.com/sign-up) and an API token (Workers + KV + R2 + Queues).
 2. Use this template to create **your** repository (not the template source — that name is special; see the setup guide).
 3. Add GitHub secrets: `CLOUDFLARE_API_TOKEN`, and **`ADMIN_SECRET`** (password for `/admin`).
 4. Edit `wrangler.toml` once: unique **`name`** (Worker URL) and **`bucket_name`** (R2), then push to `main`.
-5. Open **`https://<your-worker-name>.workers.dev/admin`**, add podcast RSS URLs, save — your feed is at **`/podcasts.xml`** (KV and R2 are set up by the workflow).
+5. Open **`https://<your-worker-name>.workers.dev/admin`**, add podcast RSS URLs, save — a queue rebuild writes **`/podcasts.xml`** when it finishes (KV, R2, and the rebuild Queue are set up by the workflow). Queues usually need **Workers Paid** to enable.
 
 Optional: upload `cover.jpg` in the repo, or set `R2_PUBLIC_BASE_URL` for in-admin cover upload (see [GitHub Actions setup](docs/github-actions-setup.md)).
 
@@ -264,9 +264,9 @@ Then visit `http://localhost:8787` to test your worker.
 
 - `GET /` or `GET /podcasts.xml`: Returns the combined RSS feed
 - `GET /healthcheck`: Returns health status and last update time
-- `POST /deploy-trigger`: Manually triggers feed regeneration (requires `ADMIN_SECRET` via cookie or `Authorization: Bearer`; hourly cron also regenerates without HTTP auth)
+- `POST /deploy-trigger`: Queues a feed rebuild (requires `ADMIN_SECRET` via cookie or `Authorization: Bearer`; hourly cron also enqueues without HTTP auth)
 - `GET /admin`: Web admin (requires `ADMIN_SECRET`; disabled until the secret is set)
-- `POST /admin`: Save settings to KV (same auth as above; also accepts `Authorization: Bearer <ADMIN_SECRET>`)
+- `POST /admin`: Save settings to KV and queue a rebuild (same auth as above; also accepts `Authorization: Bearer <ADMIN_SECRET>`)
 - `POST /admin/preview`: Returns JSON `{ ok, xml }` for the current form values (same auth as `POST /admin`). Preview reuses cached source RSS bodies (~15 minutes per URL in memory, plus Cloudflare cache on subrequests) so metadata edits do not re-download feeds every time. Send form field `bypassFeedCache=1` (the admin “Refresh feed sources” button does this) to force a full re-fetch.
 - `POST /admin/login` / `POST /admin/logout`: Session cookie sign-in and sign-out
 
@@ -277,7 +277,7 @@ Then visit `http://localhost:8787` to test your worker.
 You can configure the feed in either of two ways:
 
 1. **Environment variables** in `wrangler.toml` (`[vars]`) — used when no valid config exists in KV, and by `bun run generate` locally.
-2. **Workers KV** via the web admin — once saved, KV overrides `[vars]` for generation (each save regenerates `podcasts.xml`, plus hourly cron and `/deploy-trigger`).
+2. **Workers KV** via the web admin — once saved, KV overrides `[vars]` for generation (each save queues a rebuild of `podcasts.xml`, plus hourly cron and `/deploy-trigger`).
 
 Optional `PUBLIC_BASE_URL` in `[vars]` sets the RSS `feed_url`, `site_url`, and related links (defaults to a placeholder until you set it or save the admin form):
 
@@ -301,7 +301,7 @@ Apache `.htaccess` files are **not** applied to Cloudflare Workers. To restrict 
 
 1. **KV** — With GitHub Actions, the deploy workflow creates the namespace while `id` in `wrangler.toml` is still the placeholder. Locally, create a namespace and paste its id, or deploy once via Actions and copy the id from the log.
 2. **Admin password** — `wrangler secret put ADMIN_SECRET`, or set the `ADMIN_SECRET` GitHub Actions secret so CI syncs it on deploy.
-3. Open `https://<your-worker>.workers.dev/admin`, sign in, and save your settings. Saving updates `podcasts.xml` immediately. Expand **How cutoffs & timeline merge work** under Source feeds for a short guide; for a full tutorial see [First-time setup: cutoffs and timeline merge](#first-time-cutoffs) below. Configuration is stored as JSON under the KV key `config:v1` (you edit feeds with add/remove rows in the UI—no raw JSON). The page includes a **rendered** preview (channel + episodes) and a **raw XML** tab, both updated as you edit.
+3. Open `https://<your-worker>.workers.dev/admin`, sign in, and save your settings. Saving queues a rebuild; `/podcasts.xml` updates when the job finishes (refresh `/admin` for ready / rebuilding / failed). Expand **How cutoffs & timeline merge work** under Source feeds for a short guide; for a full tutorial see [First-time setup: cutoffs and timeline merge](#first-time-cutoffs) below. Configuration is stored as JSON under the KV key `config:v1` (you edit feeds with add/remove rows in the UI—no raw JSON). The page includes a **rendered** preview (channel + episodes) and a **raw XML** tab, both updated as you edit.
 
 `FEED_INDEX_PADDING` in `wrangler.toml` only applies when loading feeds from numbered `FEED_01_URL`–style vars (e.g. `bun run generate`); the admin UI uses a feed list and does not expose padding.
 
@@ -398,7 +398,7 @@ The project includes automatic deployment on feed updates:
 bun run deploy
 ```
 
-This command deploys the worker to Cloudflare. The hourly cron (and `/admin` saves) regenerate `podcasts.xml`. Use an authenticated `POST /deploy-trigger` with `Authorization: Bearer <ADMIN_SECRET>` if you want a manual rebuild without opening the admin.
+This command deploys the worker to Cloudflare. Save, the hourly cron, and authenticated `POST /deploy-trigger` (Bearer `ADMIN_SECRET`) enqueue a queue rebuild; `/podcasts.xml` updates when the job finishes. Offline: `bun run generate` still builds XML synchronously without Queues.
 
 ## Contributing
 
