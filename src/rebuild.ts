@@ -157,6 +157,23 @@ async function putJobStatus(
 }
 
 /**
+ * Admin banner only needs queued → running → ready/failed. Per-feed KV writes
+ * are not used for shard assembly or publish claims (those are R2 + job id).
+ * Write `running` once on the first feed so hourly rebuilds stay within the
+ * free-tier KV write budget.
+ */
+export function shouldPersistRunningStatus(
+  feedIndex: number,
+  currentStatus: RebuildJobStatus,
+): boolean {
+  return (
+    feedIndex === 0 &&
+    currentStatus !== 'running' &&
+    currentStatus !== 'ready'
+  );
+}
+
+/**
  * Read the active rebuild status via the current-job pointer, then the job record.
  * Job workers never write the pointer — only `startRebuild` does — so a superseded
  * worker updating its own job record cannot overwrite a newer job's status.
@@ -450,18 +467,21 @@ async function processFeed(
     );
   }
 
-  // Only touch this job's record — never the current pointer.
-  if (!(await requireCurrentJob(env, jobId))) {
+  // Re-check before fetch. Do not write the current pointer from workers.
+  const stillCurrent = await requireCurrentJob(env, jobId);
+  if (!stillCurrent) {
     return;
   }
-  await putJobStatus(env, {
-    jobId,
-    status: 'running',
-    totalFeeds: config.feeds.length,
-    feedIndex,
-    createdAt: jobCreatedAt(current),
-    updatedAt: new Date().toISOString(),
-  });
+  if (shouldPersistRunningStatus(feedIndex, stillCurrent.status)) {
+    await putJobStatus(env, {
+      jobId,
+      status: 'running',
+      totalFeeds: config.feeds.length,
+      feedIndex: 0,
+      createdAt: jobCreatedAt(stillCurrent),
+      updatedAt: new Date().toISOString(),
+    });
+  }
 
   const feedConfig = config.feeds[feedIndex];
   const { episodes } = await parseAndFilterFeed(feedConfig, config);

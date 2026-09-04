@@ -12,18 +12,18 @@
     "fast-xml-parser": "^5.11.1"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260902.1",
+    "@cloudflare/workers-types": "^5.20260904.1",
     "@eslint/js": "^10.0.1",
     "@iarna/toml": "^2.2.5",
     "@types/bun": "latest",
     "@types/node": "^26.4.1",
     "@types/rss": "^0.0.32",
-    "eslint": "^10.9.1",
+    "eslint": "^10.10.0",
     "eslint-plugin-sonarjs": "^4.2.0",
     "globals": "^17.12.0",
-    "typescript": "5.9.2",
+    "typescript": "6.0.3",
     "typescript-eslint": "^8.69.0",
-    "wrangler": "^4.128.0"
+    "wrangler": "^4.129.0"
   },
   "description": "A Cloudflare Worker-based RSS feed combiner that merges multiple podcast feeds into a single, unified feed",
   "keywords": [
