@@ -1,4 +1,6 @@
-/** Uncached fetch — used for cron and deploy-trigger. */
+/**
+Uncached fetch — used for cron and deploy-trigger.
+*/
 export async function defaultFetchFeedText(url: string): Promise<string> {
   const response = await fetch(url);
   if (!response.ok) {
@@ -12,15 +14,17 @@ const MAX_MEMORY_ENTRIES = 64;
 
 const memoryCache = new Map<string, { text: string; expires: number }>();
 
-/** Drop all in-memory preview entries (e.g. after “Refresh feed sources”). */
+/**
+Drop all in-memory preview entries (e.g. after “Refresh feed sources”).
+*/
 export function clearPreviewFeedMemoryCache(): void {
   memoryCache.clear();
 }
 
 /**
- * Cached fetch for admin preview only: warm-isolate memory + Cloudflare cache on subrequests.
- * Avoids re-downloading source podcasts on every keystroke while editing metadata.
- */
+Cached fetch for admin preview only: warm-isolate memory + Cloudflare cache on subrequests.
+Avoids re-downloading source podcasts on every keystroke while editing metadata.
+*/
 export async function getPreviewFeedText(url: string): Promise<string> {
   const now = Date.now();
   const hit = memoryCache.get(url);

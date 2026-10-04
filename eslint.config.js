@@ -1,6 +1,6 @@
 import eslint from '@eslint/js';
+import narwhal from 'eslint-config-narwhal';
 import { defineConfig } from 'eslint/config';
-import sonarjs from 'eslint-plugin-sonarjs';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
@@ -9,6 +9,30 @@ const sharedRules = {
   '@typescript-eslint/no-unused-vars': [
     'warn',
     { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+  ],
+  // Cloudflare Workers + this repo use Env / env throughout.
+  'unicorn/name-replacements': [
+    'error',
+    {
+      allowList: {
+        Env: true,
+        env: true,
+        RebuildEnv: true,
+      },
+    },
+  ],
+  // Action helpers that return success/failure are not boolean predicates.
+  'unicorn/consistent-boolean-name': [
+    'error',
+    {
+      ignore: [
+        'claimPublishedPointer',
+        'publishJobFeed',
+        'blockHasBinding',
+        'needsRename',
+        'existing',
+      ],
+    },
   ],
 };
 
@@ -25,7 +49,7 @@ export default defineConfig(
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
-  sonarjs.configs.recommended,
+  ...narwhal,
   {
     files: ['src/**/*.ts'],
     languageOptions: {
@@ -50,7 +74,24 @@ export default defineConfig(
         tsconfigRootDir: import.meta.dirname,
       },
     },
-    rules: sharedRules,
+    rules: {
+      ...sharedRules,
+      // Wrangler/CI helper CLIs.
+      'unicorn/no-process-exit': 'off',
+    },
+  },
+  {
+    // Script that also exports helpers for unit tests.
+    files: ['scripts/ensure-queue-ci.ts'],
+    rules: {
+      'unicorn/no-exports-in-scripts': 'off',
+    },
+  },
+  {
+    files: ['**/*.test.ts'],
+    rules: {
+      'unicorn/no-top-level-assignment-in-function': 'off',
+    },
   },
   {
     files: ['src/admin.ts'],

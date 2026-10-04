@@ -1,19 +1,19 @@
 #!/usr/bin/env bun
 /**
- * Ensures a Cloudflare Queue exists for REBUILD_QUEUE and syncs the queue name
- * in wrangler.toml from the Worker `name` (rss-combiner-rebuild-<worker-name>).
- * Intended for GitHub Actions CI (and optional local use).
- *
- * Requires: CLOUDFLARE_API_TOKEN
- * Optional: CLOUDFLARE_ACCOUNT_ID (required if the token can access multiple accounts)
- *
- * Note: Enabling Queues typically requires a Workers Paid plan.
- */
+Ensures a Cloudflare Queue exists for REBUILD_QUEUE and syncs the queue name
+in wrangler.toml from the Worker `name` (rss-combiner-rebuild-<worker-name>).
+Intended for GitHub Actions CI (and optional local use).
+
+Requires: CLOUDFLARE_API_TOKEN
+Optional: CLOUDFLARE_ACCOUNT_ID (required if the token can access multiple accounts)
+
+Note: Enabling Queues typically requires a Workers Paid plan.
+*/
 
 import fs from 'node:fs/promises';
 
 function queueNameForWorker(workerName: string): string {
-  const safe = workerName.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 40);
+  const safe = workerName.replaceAll(/[^a-zA-Z0-9_-]/g, '-').slice(0, 40);
   return `rss-combiner-rebuild-${safe || 'default'}`;
 }
 
@@ -27,28 +27,33 @@ async function resolveAccountId(
   const r = await fetch('https://api.cloudflare.com/client/v4/accounts', {
     headers: { Authorization: `Bearer ${token}` },
   });
-  const j = (await r.json()) as {
+  const index = (await r.json()) as {
     success: boolean;
     result?: Array<{ id: string; name: string }>;
     errors?: unknown;
   };
-  if (!j.success || !j.result?.length) {
+  if (!index.success || !index.result?.length) {
     console.error(
       'Could not resolve Cloudflare account. Set CLOUDFLARE_ACCOUNT_ID in repository secrets.',
     );
-    console.error(j.errors);
+    console.error(index.errors);
     process.exit(1);
   }
-  if (j.result.length > 1) {
+  if (index.result.length > 1) {
     console.error(
       'This API token can access multiple Cloudflare accounts. Set CLOUDFLARE_ACCOUNT_ID in repository secrets to the account id you want (Dashboard → Workers overview → right column).',
     );
     process.exit(1);
   }
-  return j.result[0].id;
+  return index.result[0].id;
 }
 
-type QueueListItem = { queue_id?: string; queue_name?: string; id?: string; name?: string };
+type QueueListItem = {
+  queue_id?: string;
+  queue_name?: string;
+  id?: string;
+  name?: string;
+};
 
 async function listQueues(
   accountId: string,
@@ -66,17 +71,17 @@ async function listQueues(
     const r = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    const j = (await r.json()) as {
+    const index = (await r.json()) as {
       success: boolean;
       result?: QueueListItem[];
       result_info?: { total_count?: number; count?: number };
       errors?: unknown;
     };
-    if (!j.success) {
-      console.error('Queue list failed:', j.errors);
+    if (!index.success) {
+      console.error('Queue list failed:', index.errors);
       process.exit(1);
     }
-    const batch = j.result ?? [];
+    const batch = index.result ?? [];
     out.push(...batch);
     if (batch.length < perPage) break;
     page += 1;
@@ -105,20 +110,21 @@ async function createQueue(
       body: JSON.stringify({ queue_name: queueName }),
     },
   );
-  const j = (await r.json()) as {
+  const index = (await r.json()) as {
     success: boolean;
     errors?: Array<{ code: number; message: string }>;
   };
-  if (j.success) {
+  if (index.success) {
     console.log(`Created queue "${queueName}"`);
     return;
   }
-  const msg = j.errors?.map((e) => e.message).join('; ') || 'unknown error';
-  if (/already exists|unique|duplicate/i.test(msg)) {
+  const message =
+    index.errors?.map((error) => error.message).join('; ') || 'unknown error';
+  if (/already exists|unique|duplicate/i.test(message)) {
     console.log(`Queue "${queueName}" already exists`);
     return;
   }
-  console.error('Queue create failed:', j.errors);
+  console.error('Queue create failed:', index.errors);
   console.error(
     'Queues usually require Workers Paid. Enable Queues in the Cloudflare dashboard, or upgrade the plan, then re-run deploy.',
   );
@@ -131,7 +137,7 @@ async function ensureQueue(
   queueName: string,
 ): Promise<void> {
   const list = await listQueues(accountId, token);
-  const existing = list.find((q) => queueItemName(q) === queueName);
+  const existing = list.some((q) => queueItemName(q) === queueName);
   if (existing) {
     console.log(`Using existing queue "${queueName}"`);
     return;
@@ -141,10 +147,10 @@ async function ensureQueue(
 }
 
 /**
- * One TOML array-of-tables section starting at `[[header]]` and ending before
- * the next table header of any kind (`[[x]]` or `[x]`), so a block can never
- * absorb a sibling section's keys.
- */
+One TOML array-of-tables section starting at `[[header]]` and ending before
+the next table header of any kind (`[[x]]` or `[x]`), so a block can never
+absorb a sibling section's keys.
+*/
 export function eachTomlTableBlock(
   content: string,
   header: '[[queues.producers]]' | '[[queues.consumers]]',
@@ -153,28 +159,27 @@ export function eachTomlTableBlock(
   let from = 0;
   for (;;) {
     const start = content.indexOf(header, from);
-    if (start < 0) {
+    if (start === -1) {
       break;
     }
     const afterHeader = start + header.length;
     const nextTable = content.indexOf('\n[', afterHeader);
-    const end = nextTable < 0 ? content.length : nextTable;
+    const end = nextTable === -1 ? content.length : nextTable;
     blocks.push({ start, end, body: content.slice(start, end) });
     from = afterHeader;
   }
   return blocks;
 }
 
-function queueAssignmentInBlock(block: string): string | null {
+function queueAssignmentInBlock(block: string): string | undefined {
   const match = /^queue\s*=\s*"([^"]*)"/m.exec(block);
-  return match ? match[1] : null;
+  return match ? match[1] : undefined;
 }
 
 function replaceQueueAssignment(block: string, queueName: string): string {
-  if (!/^queue\s*=\s*"[^"]*"/m.test(block)) {
-    return block;
-  }
-  return block.replace(/^queue\s*=\s*"[^"]*"/m, `queue = "${queueName}"`);
+  return /^queue\s*=\s*"[^"]*"/m.test(block)
+    ? block.replace(/^queue\s*=\s*"[^"]*"/m, () => `queue = "${queueName}"`)
+    : block;
 }
 
 function blockHasBinding(block: string, bindingName: string): boolean {
@@ -188,16 +193,18 @@ function blockHasBinding(block: string, bindingName: string): boolean {
 }
 
 /**
- * Sync only the REBUILD_QUEUE producer `queue = "..."` and any consumer that
- * already points at that same queue name. Leaves other queue bindings alone.
- */
+Sync only the REBUILD_QUEUE producer `queue = "..."` and any consumer that
+already points at that same queue name. Leaves other queue bindings alone.
+*/
 export function patchWranglerQueueNames(
   content: string,
   queueName: string,
 ): string {
   const producerBlocks = eachTomlTableBlock(content, '[[queues.producers]]');
   if (producerBlocks.length === 0) {
-    console.error('wrangler.toml is missing [[queues.producers]]; refusing to patch.');
+    console.error(
+      'wrangler.toml is missing [[queues.producers]]; refusing to patch.',
+    );
     process.exit(1);
   }
 
@@ -219,7 +226,7 @@ export function patchWranglerQueueNames(
 
   const rebuildProducer = rebuildProducers[0];
   const oldQueueName = queueAssignmentInBlock(rebuildProducer.body);
-  if (oldQueueName == null) {
+  if (oldQueueName == undefined) {
     console.error(
       'REBUILD_QUEUE producer block is missing a queue = "..." line',
     );
@@ -233,14 +240,16 @@ export function patchWranglerQueueNames(
 
   const consumerBlocks = eachTomlTableBlock(patched, '[[queues.consumers]]');
   if (consumerBlocks.length === 0) {
-    console.error('wrangler.toml is missing [[queues.consumers]]; refusing to patch.');
+    console.error(
+      'wrangler.toml is missing [[queues.consumers]]; refusing to patch.',
+    );
     process.exit(1);
   }
 
   let consumerPatches = 0;
   // Apply from the end so earlier offsets stay valid.
-  for (let i = consumerBlocks.length - 1; i >= 0; i--) {
-    const block = consumerBlocks[i];
+  for (let index = consumerBlocks.length - 1; index >= 0; index--) {
+    const block = consumerBlocks[index];
     const q = queueAssignmentInBlock(block.body);
     if (q !== oldQueueName && q !== queueName) {
       continue;
@@ -282,7 +291,7 @@ async function main() {
   }
 
   const wranglerPath = 'wrangler.toml';
-  const raw = await fs.readFile(wranglerPath, 'utf-8');
+  const raw = await fs.readFile(wranglerPath, 'utf8');
 
   const nameMatch = /^name\s*=\s*"([^"]+)"/m.exec(raw);
   if (!nameMatch) {
@@ -295,11 +304,11 @@ async function main() {
   await ensureQueue(accountId, token, queueName);
 
   const patched = patchWranglerQueueNames(raw, queueName);
-  if (patched !== raw) {
-    await fs.writeFile(wranglerPath, patched, 'utf-8');
-    console.log(`Patched wrangler.toml queue name to "${queueName}"`);
-  } else {
+  if (patched === raw) {
     console.log(`wrangler.toml already uses queue "${queueName}"`);
+  } else {
+    await fs.writeFile(wranglerPath, patched, 'utf8');
+    console.log(`Patched wrangler.toml queue name to "${queueName}"`);
   }
 }
 
@@ -307,8 +316,8 @@ async function main() {
 if (import.meta.main) {
   try {
     await main();
-  } catch (e) {
-    console.error(e);
+  } catch (error) {
+    console.error(error);
     process.exit(1);
   }
 }

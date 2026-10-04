@@ -1,18 +1,18 @@
 #!/usr/bin/env bun
 /**
- * Ensures a Workers KV namespace exists for CONFIG_KV and patches wrangler.toml
- * when the id is still the template placeholder. Intended for GitHub Actions CI.
- *
- * Requires: CLOUDFLARE_API_TOKEN
- * Optional: CLOUDFLARE_ACCOUNT_ID (required if the token can access multiple accounts)
- */
+Ensures a Workers KV namespace exists for CONFIG_KV and patches wrangler.toml
+when the id is still the template placeholder. Intended for GitHub Actions CI.
+
+Requires: CLOUDFLARE_API_TOKEN
+Optional: CLOUDFLARE_ACCOUNT_ID (required if the token can access multiple accounts)
+*/
 
 import fs from 'node:fs/promises';
 
 const PLACEHOLDER_ID = '00000000000000000000000000000000';
 
 function kvNamespaceTitle(workerName: string): string {
-  const safe = workerName.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 80);
+  const safe = workerName.replaceAll(/[^a-zA-Z0-9_-]/g, '-').slice(0, 80);
   return `rss-combiner-kv-${safe || 'default'}`;
 }
 
@@ -26,25 +26,25 @@ async function resolveAccountId(
   const r = await fetch('https://api.cloudflare.com/client/v4/accounts', {
     headers: { Authorization: `Bearer ${token}` },
   });
-  const j = (await r.json()) as {
+  const index = (await r.json()) as {
     success: boolean;
     result?: Array<{ id: string; name: string }>;
     errors?: unknown;
   };
-  if (!j.success || !j.result?.length) {
+  if (!index.success || !index.result?.length) {
     console.error(
       'Could not resolve Cloudflare account. Set CLOUDFLARE_ACCOUNT_ID in repository secrets.',
     );
-    console.error(j.errors);
+    console.error(index.errors);
     process.exit(1);
   }
-  if (j.result.length > 1) {
+  if (index.result.length > 1) {
     console.error(
       'This API token can access multiple Cloudflare accounts. Set CLOUDFLARE_ACCOUNT_ID in repository secrets to the account id you want (Dashboard → Workers overview → right column).',
     );
     process.exit(1);
   }
-  return j.result[0].id;
+  return index.result[0].id;
 }
 
 async function listKvNamespaces(
@@ -63,19 +63,19 @@ async function listKvNamespaces(
     const r = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    const j = (await r.json()) as {
+    const index = (await r.json()) as {
       success: boolean;
       result: Array<{ id: string; title: string }>;
       result_info?: { total_count: number };
       errors?: unknown;
     };
-    if (!j.success) {
-      console.error('KV namespace list failed:', j.errors);
+    if (!index.success) {
+      console.error('KV namespace list failed:', index.errors);
       process.exit(1);
     }
-    out.push(...j.result);
-    const total = j.result_info?.total_count ?? out.length;
-    if (out.length >= total || j.result.length < perPage) break;
+    out.push(...index.result);
+    const total = index.result_info?.total_count ?? out.length;
+    if (out.length >= total || index.result.length < perPage) break;
     page += 1;
   }
   return out;
@@ -97,21 +97,22 @@ async function createKvNamespace(
       body: JSON.stringify({ title }),
     },
   );
-  const j = (await r.json()) as {
+  const index = (await r.json()) as {
     success: boolean;
     result?: { id: string; title: string };
     errors?: Array<{ code: number; message: string }>;
   };
-  if (j.success && j.result?.id) {
-    return j.result.id;
+  if (index.success && index.result?.id) {
+    return index.result.id;
   }
-  const msg = j.errors?.map((e) => e.message).join('; ') || 'unknown error';
-  if (r.status === 400 && /already exists|unique/i.test(msg)) {
+  const message =
+    index.errors?.map((error) => error.message).join('; ') || 'unknown error';
+  if (r.status === 400 && /already exists|unique/i.test(message)) {
     const list = await listKvNamespaces(accountId, token);
     const found = list.find((n) => n.title === title);
     if (found) return found.id;
   }
-  console.error('KV namespace create failed:', j.errors);
+  console.error('KV namespace create failed:', index.errors);
   process.exit(1);
 }
 
@@ -137,7 +138,10 @@ function patchWranglerKvId(content: string, newId: string): string {
     );
     process.exit(1);
   }
-  return content.replace(`id = "${PLACEHOLDER_ID}"`, `id = "${newId}"`);
+  return content.replace(
+    `id = "${PLACEHOLDER_ID}"`,
+    () => `id = "${newId}"`,
+  );
 }
 
 async function main() {
@@ -160,7 +164,7 @@ async function main() {
   }
 
   const wranglerPath = 'wrangler.toml';
-  const raw = await fs.readFile(wranglerPath, 'utf-8');
+  const raw = await fs.readFile(wranglerPath, 'utf8');
 
   if (!raw.includes(`id = "${PLACEHOLDER_ID}"`)) {
     console.log(
@@ -178,13 +182,13 @@ async function main() {
   const title = kvNamespaceTitle(workerName);
   const newId = await ensureNamespaceId(accountId, token, title);
   const patched = patchWranglerKvId(raw, newId);
-  await fs.writeFile(wranglerPath, patched, 'utf-8');
+  await fs.writeFile(wranglerPath, patched, 'utf8');
   console.log(`Patched wrangler.toml with KV namespace id ${newId}`);
 }
 
 try {
   await main();
-} catch (e) {
-  console.error(e);
+} catch (error) {
+  console.error(error);
   process.exit(1);
 }

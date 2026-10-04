@@ -26,7 +26,7 @@ function logCurrentConfig(
 
 async function findExistingFile(
   files: readonly string[],
-): Promise<string | null> {
+): Promise<string | undefined> {
   for (const file of files) {
     try {
       await fs.access(file);
@@ -35,11 +35,11 @@ async function findExistingFile(
       // File doesn't exist, continue
     }
   }
-  return null;
+  return undefined;
 }
 
 function logCoverHints(
-  localCoverFile: string | null,
+  localCoverFile: string | undefined,
   feedImageUrl: string | undefined,
   bucketName: string,
 ): void {
@@ -113,7 +113,7 @@ async function setupTemplate() {
   console.log('🚀 Setting up your RSS Combiner...\n');
 
   const wranglerPath = 'wrangler.toml';
-  const wranglerContent = await fs.readFile(wranglerPath, 'utf-8');
+  const wranglerContent = await fs.readFile(wranglerPath, 'utf8');
   const hasExampleFeeds = wranglerContent.includes('feeds.example.com');
   warnIfExampleFeeds(wranglerContent);
 
@@ -146,6 +146,6 @@ async function setupTemplate() {
 
 try {
   await setupTemplate();
-} catch (e) {
-  console.error(e);
+} catch (error) {
+  console.error(error);
 }

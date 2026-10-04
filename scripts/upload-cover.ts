@@ -9,7 +9,7 @@ async function uploadCover() {
 
   // Check for cover image files
   const possibleFiles = ['cover.jpg', 'cover.jpeg', 'cover.png'];
-  let coverFile: string | null = null;
+  let coverFile: string | undefined;
 
   for (const file of possibleFiles) {
     try {
@@ -32,7 +32,7 @@ async function uploadCover() {
   }
 
   // Read wrangler config to get bucket name
-  const wranglerContent = await fs.readFile('wrangler.toml', 'utf-8');
+  const wranglerContent = await fs.readFile('wrangler.toml', 'utf8');
   const config = parse(wranglerContent);
   const bucketName = (config.r2_buckets as any)?.[0]?.bucket_name as string;
 
@@ -82,6 +82,6 @@ async function uploadCover() {
 
 try {
   await uploadCover();
-} catch (e) {
-  console.error(e);
+} catch (error) {
+  console.error(error);
 }

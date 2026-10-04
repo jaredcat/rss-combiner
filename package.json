@@ -23,9 +23,10 @@
     "lint:fix": "eslint . --fix && tsc --noEmit"
   },
   "dependencies": {
-    "@codekitties/workers-mini-admin": "^0.1.1",
+    "eslint-config-narwhal": "^1.0.2",
     "fast-xml-parser": "^5.11.2",
-    "rss": "^1.2.2"
+    "rss": "^1.2.2",
+    "workers-mini-admin": "^0.1.1"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261004.1",

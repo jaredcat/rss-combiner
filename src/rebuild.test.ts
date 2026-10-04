@@ -4,7 +4,7 @@ import {
   REBUILD_CURRENT_KV_KEY,
   REBUILD_PUBLISHED_R2_KEY,
   shouldPersistRunningStatus,
-  type RebuildEnv,
+  type RebuildEnv as RebuildEnvironment,
 } from './rebuild.ts';
 
 type Conditional = {
@@ -13,9 +13,9 @@ type Conditional = {
 };
 
 /**
- * Mirrors workerd: a quoted etag in `onlyIf` is a TypeError, not a soft failure.
- * @see https://github.com/cloudflare/workerd/blob/main/src/workerd/api/r2-bucket.c%2B%2B
- */
+Mirrors workerd: a quoted etag in `onlyIf` is a TypeError, not a soft failure.
+@see https://github.com/cloudflare/workerd/blob/main/src/workerd/api/r2-bucket.c%2B%2B
+*/
 function assertUnquotedEtag(value: string): void {
   if (value.startsWith('"') || value.startsWith('W/"')) {
     throw new TypeError(
@@ -25,15 +25,15 @@ function assertUnquotedEtag(value: string): void {
 }
 
 class FakeBucket {
-  store = new Map<string, { body: string; etag: string }>();
   private seq = 0;
+  store = new Map<string, { body: string; etag: string }>();
   onGet?: (key: string) => Promise<void>;
 
   async get(key: string) {
     await this.onGet?.(key);
     const object = this.store.get(key);
     if (!object) {
-      return null;
+      return;
     }
     return {
       etag: object.etag,
@@ -52,22 +52,22 @@ class FakeBucket {
 
     if (cond?.etagMatches !== undefined) {
       assertUnquotedEtag(cond.etagMatches);
-      const ok =
+      const isOk =
         cond.etagMatches === '*'
           ? existing !== undefined
           : existing?.etag === cond.etagMatches;
-      if (!ok) {
-        return null;
+      if (!isOk) {
+        return;
       }
     }
     if (cond?.etagDoesNotMatch !== undefined) {
       assertUnquotedEtag(cond.etagDoesNotMatch);
-      const blocked =
+      const isBlocked =
         cond.etagDoesNotMatch === '*'
           ? existing !== undefined
           : existing?.etag === cond.etagDoesNotMatch;
-      if (blocked) {
-        return null;
+      if (isBlocked) {
+        return;
       }
     }
 
@@ -81,7 +81,7 @@ class FakeBucket {
 class FakeKV {
   store = new Map<string, string>();
   async get(key: string) {
-    return this.store.get(key) ?? null;
+    return this.store.get(key) ?? undefined;
   }
   async put(key: string, value: string) {
     this.store.set(key, value);
@@ -93,7 +93,7 @@ const NEW = '2026-06-01T00:00:00.000Z';
 
 let bucket: FakeBucket;
 let kv: FakeKV;
-let env: RebuildEnv;
+let environment: RebuildEnvironment;
 
 function setCurrentJob(jobId: string, createdAt: string): void {
   kv.store.set(REBUILD_CURRENT_KV_KEY, JSON.stringify({ jobId, createdAt }));
@@ -117,19 +117,19 @@ function setPublished(jobId: string, createdAt: string): void {
   });
 }
 
-function publishedPointer(): { jobId: string; createdAt: string } | null {
+function publishedPointer(): { jobId: string; createdAt: string } | undefined {
   const raw = bucket.store.get(REBUILD_PUBLISHED_R2_KEY);
-  return raw ? JSON.parse(raw.body) : null;
+  return raw ? JSON.parse(raw.body) : undefined;
 }
 
 beforeEach(() => {
   bucket = new FakeBucket();
   kv = new FakeKV();
-  env = {
+  environment = {
     XML_BUCKET: bucket,
     CONFIG_KV: kv,
     REBUILD_QUEUE: { send: async () => {} },
-  } as unknown as RebuildEnv;
+  } as unknown as RebuildEnvironment;
 });
 
 describe('shouldPersistRunningStatus', () => {
@@ -150,7 +150,9 @@ describe('claimPublishedPointer', () => {
   test('claims the first publication when no pointer exists', async () => {
     setCurrentJob('job-a', NEW);
 
-    await expect(claimPublishedPointer(env, 'job-a', NEW)).resolves.toBe(true);
+    await expect(
+      claimPublishedPointer(environment, 'job-a', NEW),
+    ).resolves.toBe(true);
     expect(publishedPointer()).toEqual({ jobId: 'job-a', createdAt: NEW });
   });
 
@@ -159,9 +161,9 @@ describe('claimPublishedPointer', () => {
     setPublished('job-old', OLD);
 
     // Passing a quoted etag to onlyIf would throw here rather than return false.
-    await expect(claimPublishedPointer(env, 'job-new', NEW)).resolves.toBe(
-      true,
-    );
+    await expect(
+      claimPublishedPointer(environment, 'job-new', NEW),
+    ).resolves.toBe(true);
     expect(publishedPointer()).toEqual({ jobId: 'job-new', createdAt: NEW });
   });
 
@@ -169,9 +171,9 @@ describe('claimPublishedPointer', () => {
     setCurrentJob('job-old', OLD);
     setPublished('job-new', NEW);
 
-    await expect(claimPublishedPointer(env, 'job-old', OLD)).resolves.toBe(
-      false,
-    );
+    await expect(
+      claimPublishedPointer(environment, 'job-old', OLD),
+    ).resolves.toBe(false);
     expect(publishedPointer()).toEqual({ jobId: 'job-new', createdAt: NEW });
   });
 
@@ -179,51 +181,57 @@ describe('claimPublishedPointer', () => {
     setCurrentJob('job-a', NEW);
     setPublished('job-a', NEW);
 
-    await expect(claimPublishedPointer(env, 'job-a', NEW)).resolves.toBe(true);
+    await expect(
+      claimPublishedPointer(environment, 'job-a', NEW),
+    ).resolves.toBe(true);
     expect(publishedPointer()).toEqual({ jobId: 'job-a', createdAt: NEW });
   });
 
   test('backs off when a newer job publishes mid-claim', async () => {
     setCurrentJob('job-mid', OLD);
 
-    let injected = false;
+    let isInjected = false;
     bucket.onGet = async (key) => {
-      if (key === REBUILD_PUBLISHED_R2_KEY && !injected) {
-        injected = true;
-        // A newer finalizer wins the pointer between our read and our write.
-        setPublished('job-newest', NEW);
+      if (key !== REBUILD_PUBLISHED_R2_KEY || isInjected) {
+        return;
       }
+
+      isInjected = true;
+      // A newer finalizer wins the pointer between our read and our write.
+      setPublished('job-newest', NEW);
     };
 
-    await expect(claimPublishedPointer(env, 'job-mid', OLD)).resolves.toBe(
-      false,
-    );
+    await expect(
+      claimPublishedPointer(environment, 'job-mid', OLD),
+    ).resolves.toBe(false);
     expect(publishedPointer()).toEqual({ jobId: 'job-newest', createdAt: NEW });
   });
 
   test('retries and wins when the interleaved publication is older', async () => {
     setCurrentJob('job-newest', NEW);
 
-    let injected = false;
+    let isInjected = false;
     bucket.onGet = async (key) => {
-      if (key === REBUILD_PUBLISHED_R2_KEY && !injected) {
-        injected = true;
-        setPublished('job-stale', OLD);
+      if (key !== REBUILD_PUBLISHED_R2_KEY || isInjected) {
+        return;
       }
+
+      isInjected = true;
+      setPublished('job-stale', OLD);
     };
 
-    await expect(claimPublishedPointer(env, 'job-newest', NEW)).resolves.toBe(
-      true,
-    );
+    await expect(
+      claimPublishedPointer(environment, 'job-newest', NEW),
+    ).resolves.toBe(true);
     expect(publishedPointer()).toEqual({ jobId: 'job-newest', createdAt: NEW });
   });
 
   test('refuses to claim once the job is no longer current', async () => {
     setCurrentJob('job-other', NEW);
 
-    await expect(claimPublishedPointer(env, 'job-superseded', OLD)).resolves.toBe(
-      false,
-    );
-    expect(publishedPointer()).toBeNull();
+    await expect(
+      claimPublishedPointer(environment, 'job-superseded', OLD),
+    ).resolves.toBe(false);
+    expect(publishedPointer()).toBeUndefined();
   });
 });

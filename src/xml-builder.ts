@@ -1,19 +1,20 @@
 import { XMLParser } from 'fast-xml-parser';
 import RSS from 'rss';
 import type { AppConfig, CoverMode, FeedEntry } from './config';
-import { defaultFetchFeedText, getPreviewFeedText } from './feedFetch';
+import { defaultFetchFeedText, getPreviewFeedText } from './feed-fetch';
 
-/** RSS `pubDate` may be a string or `{ '#text': string }` from fast-xml-parser. */
+/**
+RSS `pubDate` may be a string or `{ '#text': string }` from fast-xml-parser.
+*/
 function normalizeRssText(value: unknown): string {
-  if (value == null) return '';
+  if (value == undefined) return '';
   if (typeof value === 'string') return value;
-  if (typeof value === 'object' && value !== null && '#text' in value) {
-    return String((value as { '#text': unknown })['#text']);
-  }
-  return '';
+  return typeof value === 'object' && value !== null && '#text' in value ? String((value as { '#text': unknown })['#text']) : '';
 }
 
-/** Episode after parse + timeline shift (in-memory). */
+/**
+Episode after parse + timeline shift (in-memory).
+*/
 export type CustomItem = {
   title: string;
   link?: string;
@@ -39,7 +40,9 @@ export type CustomItem = {
   sortDate: Date;
 };
 
-/** One episode bound to its source feed (for merge + R2 shards). */
+/**
+One episode bound to its source feed (for merge + R2 shards).
+*/
 export type MergedEpisode = {
   item: CustomItem;
   feedTitle: string;
@@ -47,7 +50,9 @@ export type MergedEpisode = {
   feedImage?: string;
 };
 
-/** JSON-safe shard stored in R2 during queue rebuild. */
+/**
+JSON-safe shard stored in R2 during queue rebuild.
+*/
 export type SerializedMergedEpisode = {
   item: Omit<CustomItem, 'sortDate'> & { sortDate: string };
   feedTitle: string;
@@ -63,12 +68,11 @@ function compareStrings(a: string, b: string): number {
 function compareSortTimes(a: Date, b: Date): number {
   const aTime = a.getTime();
   const bTime = b.getTime();
-  const aInvalid = Number.isNaN(aTime);
-  const bInvalid = Number.isNaN(bTime);
-  if (aInvalid && bInvalid) return 0;
-  if (aInvalid) return 1;
-  if (bInvalid) return -1;
-  return aTime - bTime;
+  const isAInvalid = Number.isNaN(aTime);
+  const isBInvalid = Number.isNaN(bTime);
+  if (isAInvalid && isBInvalid) return 0;
+  if (isAInvalid) return 1;
+  return isBInvalid ? -1 : aTime - bTime;
 }
 
 function guidSortKey(item: CustomItem): string {
@@ -76,7 +80,9 @@ function guidSortKey(item: CustomItem): string {
   return typeof value === 'string' ? value : String(value ?? '');
 }
 
-/** Date first; ties use guid/link/title/source so Promise.all finish order cannot reshuffle. */
+/**
+Date first; ties use guid/link/title/source so Promise.all finish order cannot reshuffle.
+*/
 export function compareItems(
   a: CustomItem,
   b: CustomItem,
@@ -93,9 +99,7 @@ export function compareItems(
   if (byLink !== 0) return byLink;
 
   const byTitle = compareStrings(a.title || '', b.title || '');
-  if (byTitle !== 0) return byTitle;
-
-  return compareStrings(aSource, bSource);
+  return byTitle === 0 ? compareStrings(aSource, bSource) : byTitle;
 }
 
 export function serializeMergedEpisodes(
@@ -138,9 +142,9 @@ async function parseFeed(
   options?: { lightweight?: boolean },
 ): Promise<{ title: string; items: CustomItem[]; image?: string }> {
   const text = await fetchFeedText(url);
-  const lightweight = options?.lightweight === true;
+  const isLightweight = options?.lightweight === true;
   const parser = new XMLParser(
-    lightweight
+    isLightweight
       ? {
           // Preview: skip giant HTML blobs — they dominate CPU/memory and aren't needed for a 40-ep slice.
           ignoreAttributes: false,
@@ -218,7 +222,7 @@ async function parseFeed(
                 isPermaLink: item.guid['@_isPermaLink'] === 'true',
               }
             : undefined,
-          description: lightweight ? '' : item.description || '',
+          description: isLightweight ? '' : item.description || '',
           pubDate: sortDate.toUTCString(), // Use adjusted date
           pubDateOriginal: originalDate.toUTCString(), // Keep original date
           enclosure: item.enclosure
@@ -236,7 +240,7 @@ async function parseFeed(
         },
       ];
     })
-    .sort((ep1: CustomItem, ep2: CustomItem) => compareItems(ep1, ep2));
+    .toSorted((ep1: CustomItem, ep2: CustomItem) => compareItems(ep1, ep2));
 
   return {
     title: channel.title || '',
@@ -250,7 +254,7 @@ function episodeItunesImageElements(
   feedImageUrl: string | undefined,
   itemItunesImage: string,
   feedImage: string | undefined,
-): { 'itunes:image': { _attr: { href: string } } } | false {
+): false | { 'itunes:image': { _attr: { href: string } } } {
   if (coverMode === 'main') {
     if (!feedImageUrl) {
       return false;
@@ -321,9 +325,9 @@ function createRssChannel(config: AppConfig): RSS {
     }),
     custom_namespaces: {
       // Podcast namespace URIs are historically http:// (not fetch URLs).
-      // eslint-disable-next-line sonarjs/no-clear-text-protocols -- XML namespace identifiers
-      itunes: 'http://www.itunes.com/dtds/podcast-1.0.dtd',
-      content: 'http://purl.org/rss/1.0/modules/content/',
+       
+      itunes: 'https://www.itunes.com/dtds/podcast-1.0.dtd',
+      content: 'https://purl.org/rss/1.0/modules/content/',
     },
     custom_elements: [
       { 'itunes:author': 'RSS Feed Combiner' },
@@ -353,8 +357,8 @@ function appendEpisodesToRss(
     itemsForOutput[0].item.pubDate,
   ).getUTCMonth();
 
-  for (const { item, feedTitle: srcFeedTitle, feedImage } of itemsForOutput) {
-    const itemTitle = `${item.title || ''} - ${srcFeedTitle}`;
+  for (const { item, feedTitle: sourceFeedTitle, feedImage } of itemsForOutput) {
+    const itemTitle = `${item.title || ''} - ${sourceFeedTitle}`;
     episode++;
 
     const itemMonth = new Date(item.pubDate).getUTCMonth();
@@ -363,7 +367,7 @@ function appendEpisodesToRss(
       currentSeasonMonth = itemMonth;
     }
 
-    const imgEl = episodeItunesImageElements(
+    const imgElement = episodeItunesImageElements(
       config.coverMode,
       config.feedImageUrl,
       item['itunes:image'] || '',
@@ -390,16 +394,16 @@ function appendEpisodesToRss(
         { 'itunes:season': item['itunes:season'] || season },
         { 'itunes:episode': item['itunes:episode'] || episode },
         { pubDateOriginal: item.pubDateOriginal },
-        imgEl,
+        imgElement,
       ].filter(Boolean),
     });
   }
 }
 
 /**
- * Fetch, parse, and cutoff-filter a single source feed into merged episodes.
- * Used by queue rebuild (one feed per invocation) and by fetchXml.
- */
+Fetch, parse, and cutoff-filter a single source feed into merged episodes.
+Used by queue rebuild (one feed per invocation) and by fetchXml.
+*/
 export async function parseAndFilterFeed(
   feedConfig: FeedEntry,
   config: AppConfig,
@@ -414,9 +418,9 @@ export async function parseAndFilterFeed(
     feedConfig.url,
     {
       yearCutoff: feedConfig.cutoffYear
-        ? Number.parseInt(feedConfig.cutoffYear, 10)
+        ? Number(feedConfig.cutoffYear)
         : undefined,
-      defaultCutoffYear: Number.parseInt(defaultYear, 10),
+      defaultCutoffYear: Number(defaultYear),
       mergeTimeline: feedConfig.mergeTimeline,
     },
     fetchFeedText,
@@ -433,9 +437,9 @@ export async function parseAndFilterFeed(
     if (!item.pubDate) continue;
     const pubDate = new Date(item.pubDateOriginal || '');
     const cutoffDate = new Date(
-      Number.parseInt(feedConfig.cutoffYear || defaultYear, 10),
-      Number.parseInt(feedConfig.cutoffMonth || defaultMonth, 10) - 1,
-      Number.parseInt(feedConfig.cutoffDay || defaultDay, 10),
+      Number(feedConfig.cutoffYear || defaultYear),
+      Number(feedConfig.cutoffMonth || defaultMonth) - 1,
+      Number(feedConfig.cutoffDay || defaultDay),
     );
     cutoffDate.setHours(0, 0, 0, 0);
     if (cutoffDate >= pubDate) continue;
@@ -451,14 +455,16 @@ export async function parseAndFilterFeed(
   return { channelTitle, episodes };
 }
 
-/** Merge episode lists, sort deterministically, and build podcasts.xml. */
+/**
+Merge episode lists, sort deterministically, and build podcasts.xml.
+*/
 export function buildPodcastsXml(
   config: AppConfig,
   allItems: MergedEpisode[],
   options?: { indent?: boolean; lightweight?: boolean },
 ): string {
   const feed = createRssChannel(config);
-  const sorted = [...allItems].sort((a, b) =>
+  const sorted = allItems.toSorted((a, b) =>
     compareItems(a.item, b.item, a.feedUrl, b.feedUrl),
   );
   appendEpisodesToRss(feed, config, sorted, {
@@ -467,148 +473,132 @@ export function buildPodcastsXml(
   return feed.xml({ indent: options?.indent !== false });
 }
 
-export class XMLBuilder {
-  static async fetchXml(
-    config: AppConfig,
-    options: {
-      quiet?: boolean;
-      cacheFeedBodies?: boolean;
-      fetchFeedText?: (url: string) => Promise<string>;
-      /** Cap episodes in the output. Used by admin preview. */
-      maxItems?: number;
-      /** Which end of the sorted timeline to keep when maxItems is set. Default newest. */
-      itemSlice?: 'newest' | 'oldest';
-      /** Drop episode HTML bodies while parsing (admin preview). */
-      lightweight?: boolean;
-      includeFeedChannelTitles: true;
-    },
-  ): Promise<{
-    xml: string;
-    channelTitles: string[];
-    previewTruncated?: boolean;
-    previewTotalItems?: number;
-    previewSlice?: 'newest' | 'oldest';
-  }>;
-  static async fetchXml(
-    config: AppConfig,
-    options?: {
-      quiet?: boolean;
-      /** When true (admin preview), reuse in-memory + edge-cached source RSS bodies. */
-      cacheFeedBodies?: boolean;
-      /** Override how feed XML is loaded (tests). */
-      fetchFeedText?: (url: string) => Promise<string>;
-      maxItems?: number;
-      itemSlice?: 'newest' | 'oldest';
-      /** Drop episode HTML bodies while parsing (admin preview). */
-      lightweight?: boolean;
-      includeFeedChannelTitles?: false;
-    },
-  ): Promise<string>;
-  static async fetchXml(
-    config: AppConfig,
-    options?: {
-      quiet?: boolean;
-      cacheFeedBodies?: boolean;
-      fetchFeedText?: (url: string) => Promise<string>;
-      maxItems?: number;
-      itemSlice?: 'newest' | 'oldest';
-      /** Drop episode HTML bodies while parsing (admin preview). */
-      lightweight?: boolean;
-      includeFeedChannelTitles?: boolean;
-    },
-  ): Promise<
-    | string
-    | {
-        xml: string;
-        channelTitles: string[];
-        previewTruncated?: boolean;
-        previewTotalItems?: number;
-        previewSlice?: 'newest' | 'oldest';
-      }
-  > {
-    if (!options?.quiet) {
-      console.log('Collecting feed configs...');
-    }
+type FetchXmlOptions = {
+  quiet?: boolean;
+  /**
+  When true (admin preview), reuse in-memory + edge-cached source RSS bodies.
+  */
+  cacheFeedBodies?: boolean;
+  /**
+  Override how feed XML is loaded (tests).
+  */
+  fetchFeedText?: (url: string) => Promise<string>;
+  /**
+  Cap episodes in the output. Used by admin preview.
+  */
+  maxItems?: number;
+  /**
+  Which end of the sorted timeline to keep when maxItems is set. Default newest.
+  */
+  itemSlice?: 'newest' | 'oldest';
+  /**
+  Drop episode HTML bodies while parsing (admin preview).
+  */
+  lightweight?: boolean;
+};
 
-    const feeds = config.feeds;
-    if (!options?.quiet) {
-      console.log(`Found ${feeds.length} feeds to process`);
-    }
+type FetchXmlWithTitles = {
+  xml: string;
+  channelTitles: string[];
+  previewTruncated?: boolean;
+  previewTotalItems?: number;
+  previewSlice?: 'newest' | 'oldest';
+};
 
-    const fetchFeedText =
-      options?.fetchFeedText ??
-      (options?.cacheFeedBodies ? getPreviewFeedText : defaultFetchFeedText);
+async function fetchXml(
+  config: AppConfig,
+  options: FetchXmlOptions & { includeFeedChannelTitles: true },
+): Promise<FetchXmlWithTitles>;
+async function fetchXml(
+  config: AppConfig,
+  options?: FetchXmlOptions & { includeFeedChannelTitles?: false },
+): Promise<string>;
+async function fetchXml(
+  config: AppConfig,
+  options?: FetchXmlOptions & { includeFeedChannelTitles?: boolean },
+): Promise<string | FetchXmlWithTitles> {
+  if (!options?.quiet) {
+    console.log('Collecting feed configs...');
+  }
 
-    const allItems: MergedEpisode[] = [];
-    const channelTitles: string[] = feeds.map(() => '');
-    const previewMeta: {
-      truncated: boolean;
-      total: number;
-      slice: 'newest' | 'oldest';
-    } = { truncated: false, total: 0, slice: 'newest' };
+  const feeds = config.feeds;
+  if (!options?.quiet) {
+    console.log(`Found ${feeds.length} feeds to process`);
+  }
 
-    try {
-      await Promise.all(
-        feeds.map(async (feedConfig, feedIndex) => {
-          try {
-            const { channelTitle, episodes } = await parseAndFilterFeed(
-              feedConfig,
-              config,
-              fetchFeedText,
-              { lightweight: options?.lightweight === true },
-            );
-            channelTitles[feedIndex] = channelTitle;
-            allItems.push(...episodes);
-          } catch (error) {
-            const message =
-              error instanceof Error ? error.message : String(error);
-            throw new Error(
-              `Failed to process feed ${feedConfig.url}: ${message}`,
-              { cause: error },
-            );
-          }
+  const fetchFeedText =
+    options?.fetchFeedText ??
+    (options?.cacheFeedBodies ? getPreviewFeedText : defaultFetchFeedText);
+
+  const collectedItems: MergedEpisode[] = [];
+  const channelTitles: string[] = feeds.map(() => '');
+  const previewMeta: {
+    truncated: boolean;
+    total: number;
+    slice: 'newest' | 'oldest';
+  } = { truncated: false, total: 0, slice: 'newest' };
+
+  try {
+    await Promise.all(
+      feeds.map(async (feedConfig, feedIndex) => {
+        try {
+          const { channelTitle, episodes } = await parseAndFilterFeed(
+            feedConfig,
+            config,
+            fetchFeedText,
+            { lightweight: options?.lightweight === true },
+          );
+          channelTitles[feedIndex] = channelTitle;
+          collectedItems.push(...episodes);
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `Failed to process feed ${feedConfig.url}: ${message}`,
+            { cause: error },
+          );
+        }
+      }),
+    );
+
+    const allItems = collectedItems.toSorted((a, b) =>
+      compareItems(a.item, b.item, a.feedUrl, b.feedUrl),
+    );
+
+    // Sorted ascending by sortDate: oldest first, newest last.
+    const itemSlice = options?.itemSlice === 'oldest' ? 'oldest' : 'newest';
+    previewMeta.total = allItems.length;
+    previewMeta.slice = itemSlice;
+    const selected = selectPreviewItems(
+      allItems,
+      options?.maxItems,
+      itemSlice,
+    );
+    previewMeta.truncated = selected.truncated;
+    const itemsForOutput = selected.items;
+
+    const feed = createRssChannel(config);
+    appendEpisodesToRss(feed, config, itemsForOutput, {
+      lightweight: options?.lightweight,
+    });
+
+    const xmlOut = feed.xml({ indent: !previewMeta.truncated });
+    if (options?.includeFeedChannelTitles) {
+      return {
+        xml: xmlOut,
+        channelTitles,
+        ...(previewMeta.truncated && {
+          previewTruncated: true,
+          previewTotalItems: previewMeta.total,
+          previewSlice: previewMeta.slice,
         }),
-      );
-
-      allItems.sort((a, b) =>
-        compareItems(a.item, b.item, a.feedUrl, b.feedUrl),
-      );
-
-      // Sorted ascending by sortDate: oldest first, newest last.
-      const itemSlice = options?.itemSlice === 'oldest' ? 'oldest' : 'newest';
-      previewMeta.total = allItems.length;
-      previewMeta.slice = itemSlice;
-      const selected = selectPreviewItems(
-        allItems,
-        options?.maxItems,
-        itemSlice,
-      );
-      previewMeta.truncated = selected.truncated;
-      const itemsForOutput = selected.items;
-
-      const feed = createRssChannel(config);
-      appendEpisodesToRss(feed, config, itemsForOutput, {
-        lightweight: options?.lightweight,
-      });
-
-      const xmlOut = feed.xml({ indent: !previewMeta.truncated });
-      if (options?.includeFeedChannelTitles) {
-        return {
-          xml: xmlOut,
-          channelTitles,
-          ...(previewMeta.truncated
-            ? {
-                previewTruncated: true,
-                previewTotalItems: previewMeta.total,
-                previewSlice: previewMeta.slice,
-              }
-            : {}),
-        };
-      }
-      return xmlOut;
-    } catch (error) {
-      console.error('Error processing feeds:', error);
-      throw error;
+      };
     }
+    return xmlOut;
+  } catch (error) {
+    console.error('Error processing feeds:', error);
+    throw error;
   }
 }
+
+export const XMLBuilder = { fetchXml };

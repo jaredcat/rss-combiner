@@ -288,7 +288,7 @@ FEED_IMAGE_URL = "https://your-bucket.r2.dev/cover.jpg"  # Uploaded via 'bun run
 # PUBLIC_BASE_URL = "https://your-worker.workers.dev"
 ```
 
-Channel title, image, and per-episode artwork behavior are implemented in [`src/xmlBuilder.ts`](src/xmlBuilder.ts) using [`src/config.ts`](src/config.ts) (`AppConfig`, `coverMode`).
+Channel title, image, and per-episode artwork behavior are implemented in [`src/xml-builder.ts`](src/xml-builder.ts) using [`src/config.ts`](src/config.ts) (`AppConfig`, `coverMode`).
 
 ### Web admin and Workers KV
 

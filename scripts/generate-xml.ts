@@ -1,8 +1,8 @@
 import { parse } from '@iarna/toml';
 import fs from 'node:fs/promises';
-import { envToAppConfig } from '../src/config';
-import type { Env } from '../src/worker';
-import { XMLBuilder } from '../src/xmlBuilder';
+import { envToAppConfig as environmentToAppConfig } from '../src/config';
+import type { Env as Environment } from '../src/worker';
+import { XMLBuilder } from '../src/xml-builder';
 
 function tomlScalarToString(value: unknown): string | undefined {
   if (typeof value === 'string') {
@@ -17,12 +17,12 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-async function loadWranglerConfig(): Promise<Env> {
-  const wranglerContent = await fs.readFile('wrangler.toml', 'utf-8');
+async function loadWranglerConfig(): Promise<Environment> {
+  const wranglerContent = await fs.readFile('wrangler.toml', 'utf8');
   const config = parse(wranglerContent);
 
-  const env: Record<string, unknown> = {
-    ...(isPlainObject(config.vars) ? config.vars : undefined),
+  const environment: Record<string, unknown> = {
+    ...(isPlainObject(config.vars) && config.vars),
   };
 
   // Add feed variables from top level config
@@ -32,17 +32,17 @@ async function loadWranglerConfig(): Promise<Env> {
     }
     const asString = tomlScalarToString(value);
     if (asString !== undefined) {
-      env[key] = asString;
+      environment[key] = asString;
     }
   }
 
-  return env as Env;
+  return environment as Environment;
 }
 
 async function generateXml() {
   try {
-    const env = await loadWranglerConfig();
-    const config = envToAppConfig(env);
+    const environment = await loadWranglerConfig();
+    const config = environmentToAppConfig(environment);
     const xml = await XMLBuilder.fetchXml(config, { quiet: true });
     console.log(xml);
   } catch (error) {

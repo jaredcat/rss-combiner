@@ -1,7 +1,9 @@
-import { escapeHtml } from '@codekitties/workers-mini-admin';
+import { escapeHtml } from 'workers-mini-admin';
 import type { AppConfig, FeedEntry } from './config';
 
-/** Shown on admin GET when we have the incoming request (deployed URL + upload eligibility). */
+/**
+Shown on admin GET when we have the incoming request (deployed URL + upload eligibility).
+*/
 export type AdminPageContext = {
   deployedOrigin: string;
   deployedFeedUrl: string;
@@ -11,7 +13,9 @@ export type AdminPageContext = {
 export const ADMIN_PAGE_HINT =
   'Values are stored in Workers KV and override <code>wrangler.toml</code> <code>[vars]</code> when present. Preview updates as you edit; source RSS is cached (~15 minutes per URL). Use “Refresh feed sources” for the latest upstream episodes.';
 
-/** App-specific styles on top of `@codekitties/workers-mini-admin` shared CSS. */
+/**
+App-specific styles on top of `workers-mini-admin` shared CSS.
+*/
 export const ADMIN_APP_CSS = `
     .layout { display: grid; gap: 1rem; }
     @media (min-width: 960px) {
@@ -108,10 +112,12 @@ function feedFieldsetHtml(index: number, feed: FeedEntry): string {
 function buildFeedsSection(config: AppConfig): string {
   const list =
     config.feeds.length > 0 ? config.feeds : [{ url: '' } as FeedEntry];
-  return list.map((f, i) => feedFieldsetHtml(i, f)).join('');
+  return list.map((f, index) => feedFieldsetHtml(index, f)).join('');
 }
 
-/** Template for JS: FEEDIDX replaced with row index (0, 1, …) */
+/**
+Template for JS: FEEDIDX replaced with row index (0, 1, …)
+*/
 const FEED_ROW_TEMPLATE = `<fieldset class="feed-row" data-feed-row>
     <legend>Source feed</legend>
     <label>Feed URL</label>
@@ -132,22 +138,22 @@ const FEED_ROW_TEMPLATE = `<fieldset class="feed-row" data-feed-row>
   </fieldset>`;
 
 /**
- * Inner admin UI for `createAdmin` (`wrapBody: false`).
- * Chrome (title, flash, logout) comes from workers-mini-admin.
- */
+Inner admin UI for `createAdmin` (`wrapBody: false`).
+Chrome (title, flash, logout) comes from workers-mini-admin.
+*/
 export function adminSettingsBody(
   config: AppConfig,
-  ctx?: AdminPageContext,
+  context?: AdminPageContext,
 ): string {
   const mainChecked = config.coverMode === 'main' ? ' checked' : '';
   const perFeedMainChecked =
     config.coverMode === 'per_feed_main' ? ' checked' : '';
   const sourceChecked = config.coverMode === 'source' ? ' checked' : '';
 
-  const deployedOrigin = ctx?.deployedOrigin ?? '';
-  const deployedFeedUrl = ctx?.deployedFeedUrl ?? '';
-  const showDeployHints = !!deployedOrigin;
-  const coverUploadEnabled = ctx?.coverUploadEnabled ?? false;
+  const deployedOrigin = context?.deployedOrigin ?? '';
+  const deployedFeedUrl = context?.deployedFeedUrl ?? '';
+  const isShowDeployHints = !!deployedOrigin;
+  const coverUploadEnabled = context?.coverUploadEnabled ?? false;
 
   return String.raw`
   <div class="layout">
@@ -155,7 +161,7 @@ export function adminSettingsBody(
   <form id="admin-settings-form" method="post" action="/admin">
     <div class="panel-card">
     ${
-      showDeployHints
+      isShowDeployHints
         ? `<div class="deployed-url-card">
       <p class="deployed-label">This deployment</p>
       <p class="deployed-line"><span class="k">Worker URL</span> <code>${escapeHtml(deployedOrigin)}</code></p>
@@ -242,7 +248,7 @@ export function adminSettingsBody(
   <template id="feed-row-template">${FEED_ROW_TEMPLATE}</template>
   <script>
   (function () {
-    var ITUNES_NS = 'http://www.itunes.com/dtds/podcast-1.0.dtd';
+    var ITUNES_NS = 'https://www.itunes.com/dtds/podcast-1.0.dtd';
     var form = document.getElementById('admin-settings-form');
     var statusEl = document.getElementById('preview-status');
     var xmlEl = document.getElementById('preview-xml');
@@ -445,11 +451,11 @@ export function adminSettingsBody(
     if (tabRendered) tabRendered.addEventListener('click', function () { showPanel('rendered'); });
     if (tabRaw) tabRaw.addEventListener('click', function () { showPanel('raw'); });
 
-    var debounceTimer = null;
+    var debounceTimer = undefined;
     // Heavy previews: wait for typing/edits to settle before hitting the Worker again.
     var debounceMs = 1200;
     var previewSlice = 'newest';
-    var previewAbort = null;
+    var previewAbort = undefined;
     var previewSeq = 0;
     var sliceNewestBtn = document.getElementById('preview-slice-newest');
     var sliceOldestBtn = document.getElementById('preview-slice-oldest');
@@ -483,7 +489,7 @@ export function adminSettingsBody(
       if (previewAbort) {
         try { previewAbort.abort(); } catch (e) {}
       }
-      var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      var controller = typeof AbortController !== 'undefined' ? new AbortController() : undefined;
       previewAbort = controller;
       var seq = ++previewSeq;
       statusEl.textContent = bypassCache ? 'Re-fetching all source feeds…' : 'Fetching feeds & generating XML…';
@@ -532,7 +538,7 @@ export function adminSettingsBody(
           j.channelTitles.forEach(function (t, i) {
             var row = rows[i];
             if (!row) return;
-            var s = t != null ? String(t).trim() : '';
+            var s = t != undefined ? String(t).trim() : '';
             row.setAttribute('data-channel-title', s);
           });
           for (var k = j.channelTitles.length; k < rows.length; k++) {

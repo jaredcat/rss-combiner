@@ -1,9 +1,3 @@
-import {
-  createAdmin,
-  formText,
-  isAuthenticated,
-  type AdminRouteContext,
-} from '@codekitties/workers-mini-admin';
 import type {
   ExecutionContext,
   KVNamespace,
@@ -12,6 +6,12 @@ import type {
   R2Bucket,
   ScheduledEvent,
 } from '@cloudflare/workers-types';
+import {
+  createAdmin,
+  formText,
+  isAuthenticated,
+  type AdminRouteContext,
+} from 'workers-mini-admin';
 import {
   ADMIN_APP_CSS,
   ADMIN_PAGE_HINT,
@@ -26,7 +26,7 @@ import {
   resolveConfig,
   type AppConfig,
 } from './config';
-import { clearPreviewFeedMemoryCache } from './feedFetch';
+import { clearPreviewFeedMemoryCache } from './feed-fetch';
 import {
   getPublishedFeedObject,
   getRebuildStatus,
@@ -36,32 +36,41 @@ import {
   startRebuild,
   type RebuildMessage,
 } from './rebuild';
-import { XMLBuilder } from './xmlBuilder';
+import { XMLBuilder } from './xml-builder';
 
 export interface Env {
   XML_BUCKET: R2Bucket;
   CONFIG_KV?: KVNamespace;
   REBUILD_QUEUE: Queue<RebuildMessage>;
-  /** Required for /admin UI; set with `wrangler secret put ADMIN_SECRET` */
+  /**
+  Required for /admin UI; set with `wrangler secret put ADMIN_SECRET`
+  */
   ADMIN_SECRET?: string;
-  /** Public base for R2 object URLs, e.g. https://your-bucket.r2.dev (no trailing slash). Used for cover upload + FEED_IMAGE_URL hint. */
+  /**
+  Public base for R2 object URLs, e.g. https://your-bucket.r2.dev (no trailing slash). Used for cover upload + FEED_IMAGE_URL hint.
+  */
   R2_PUBLIC_BASE_URL?: string;
-  /** Default channel image from wrangler [vars]; if it points at *.r2.dev, cover upload can derive the public URL. */
+  /**
+  Default channel image from wrangler [vars]; if it points at *.r2.dev, cover upload can derive the public URL.
+  */
   FEED_IMAGE_URL?: string;
   DEFAULT_CUTOFF_DATE_DAY: string;
   DEFAULT_CUTOFF_DATE_MONTH: string;
   DEFAULT_CUTOFF_DATE_YEAR: string;
   FEED_INDEX_PADDING: string;
-  [key: string]: string | R2Bucket | KVNamespace | Queue<RebuildMessage> | undefined;
+  [key: string]:
+    string | R2Bucket | KVNamespace | Queue<RebuildMessage> | undefined;
 }
 
-/** Public URL for cover.jpg after upload; null if we cannot derive an R2 public URL. */
-function resolveCoverPublicUrl(env: Env): string | null {
-  const base = env.R2_PUBLIC_BASE_URL?.trim();
+/**
+Public URL for cover.jpg after upload; undefined if we cannot derive an R2 public URL.
+*/
+function resolveCoverPublicUrl(environment: Env): string | undefined {
+  const base = environment.R2_PUBLIC_BASE_URL?.trim();
   if (base) {
     return `${base.replace(/\/$/, '')}/cover.jpg`;
   }
-  const feedImg = env.FEED_IMAGE_URL?.trim();
+  const feedImg = environment.FEED_IMAGE_URL?.trim();
   if (feedImg?.includes('.r2.dev')) {
     try {
       const u = new URL(feedImg);
@@ -72,16 +81,19 @@ function resolveCoverPublicUrl(env: Env): string | null {
       // ignore
     }
   }
-  return null;
+  return undefined;
 }
 
-function adminPageContext(request: Request, env: Env): AdminPageContext {
+function adminPageContext(
+  request: Request,
+  environment: Env,
+): AdminPageContext {
   const url = new URL(request.url);
   const deployedOrigin = `${url.protocol}//${url.host}`;
   return {
     deployedOrigin,
     deployedFeedUrl: `${deployedOrigin}/podcasts.xml`,
-    coverUploadEnabled: resolveCoverPublicUrl(env) !== null,
+    coverUploadEnabled: resolveCoverPublicUrl(environment) !== null,
   };
 }
 
@@ -93,12 +105,12 @@ const COVER_ALLOWED_TYPES = new Set([
   'image/gif',
 ]);
 
-function appConfigFromFormData(form: FormData, env: Env): AppConfig {
+function appConfigFromFormData(form: FormData, environment: Env): AppConfig {
   const feedTitle = formText(form, 'feedTitle');
   const feedImageUrl = formText(form, 'feedImageUrl');
   const publicBaseUrl = formText(form, 'publicBaseUrl');
   const coverMode = parseCoverMode(formText(form, 'coverMode'));
-  const pad = Number.parseInt(String(env.FEED_INDEX_PADDING || '2'), 10);
+  const pad = Number(String(environment.FEED_INDEX_PADDING || '2'));
 
   const feeds = parseFeedsFromFormData(form);
 
@@ -109,15 +121,15 @@ function appConfigFromFormData(form: FormData, env: Env): AppConfig {
     defaultCutoff: {
       day:
         formText(form, 'defaultCutoffDay') ||
-        env.DEFAULT_CUTOFF_DATE_DAY ||
+        environment.DEFAULT_CUTOFF_DATE_DAY ||
         '1',
       month:
         formText(form, 'defaultCutoffMonth') ||
-        env.DEFAULT_CUTOFF_DATE_MONTH ||
+        environment.DEFAULT_CUTOFF_DATE_MONTH ||
         '1',
       year:
         formText(form, 'defaultCutoffYear') ||
-        env.DEFAULT_CUTOFF_DATE_YEAR ||
+        environment.DEFAULT_CUTOFF_DATE_YEAR ||
         '2024',
     },
     feeds,
@@ -134,8 +146,8 @@ type RequestContext = {
 
 type RouteHandler = (
   request: Request,
-  env: Env,
-  ctx: RequestContext,
+  environment: Env,
+  context: RequestContext,
 ) => Promise<Response>;
 
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
@@ -149,7 +161,7 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
+  return Response.json(body, {
     status,
     headers: { 'content-type': JSON_CONTENT_TYPE },
   });
@@ -160,53 +172,52 @@ function jsonError(error: string, status: number): Response {
 }
 
 function parseCoverFile(
-  file: FormDataEntryValue | null,
+  file: FormDataEntryValue | undefined,
 ): { error: string } | { file: File } {
-  if (file == null || typeof file === 'string') {
+  if (typeof file === 'string' || file === undefined) {
     return { error: 'Missing file' };
   }
   if (!COVER_ALLOWED_TYPES.has(file.type)) {
     return { error: 'Use JPEG, PNG, WebP, or GIF.' };
   }
-  if (file.size > COVER_UPLOAD_MAX_BYTES) {
-    return { error: 'File too large (max 5 MB).' };
-  }
-  return { file };
+  return file.size > COVER_UPLOAD_MAX_BYTES
+    ? { error: 'File too large (max 5 MB).' }
+    : { file };
 }
 
-async function renderAdminPage(request: Request, env: Env, url: URL) {
-  const config = await resolveConfig(env, env.CONFIG_KV);
-  const saved = url.searchParams.get('saved') === '1';
-  const rebuild = await getRebuildStatus(env);
-  const flash = rebuildStatusFlash(rebuild, { saved });
-  const ctx = adminPageContext(request, env);
+async function renderAdminPage(request: Request, environment: Env, url: URL) {
+  const config = await resolveConfig(environment, environment.CONFIG_KV);
+  const isSaved = url.searchParams.get('saved') === '1';
+  const rebuild = await getRebuildStatus(environment);
+  const flash = rebuildStatusFlash(rebuild, { saved: isSaved });
+  const context = adminPageContext(request, environment);
   return {
     hint: ADMIN_PAGE_HINT,
     flash,
     shellMaxWidth: '1200px',
     wrapBody: false,
     extraCss: ADMIN_APP_CSS,
-    bodyAttrs: ctx.deployedOrigin
-      ? { 'data-deployed-origin': ctx.deployedOrigin }
+    bodyAttrs: context.deployedOrigin
+      ? { 'data-deployed-origin': context.deployedOrigin }
       : undefined,
-    body: adminSettingsBody(config, ctx),
+    body: adminSettingsBody(config, context),
   };
 }
 
 async function handleAdminPreview(
-  ctx: AdminRouteContext<Env>,
+  context: AdminRouteContext<Env>,
 ): Promise<Response> {
-  if (!(await isAuthenticated(ctx.request, ctx.secret))) {
+  if (!(await isAuthenticated(context.request, context.secret))) {
     return jsonError('Unauthorized', 401);
   }
 
-  const form = await ctx.request.formData();
+  const form = await context.request.formData();
   try {
-    const bypass = form.get('bypassFeedCache') === '1';
-    if (bypass) {
+    const isBypass = form.get('bypassFeedCache') === '1';
+    if (isBypass) {
       clearPreviewFeedMemoryCache();
     }
-    const config = appConfigFromFormData(form, ctx.env);
+    const config = appConfigFromFormData(form, context.env);
     // Full feeds can be multi‑MB; returning that as JSON OOMs / exceeds limits.
     // Preview returns a 40-episode slice (cron/save still build the full feed).
     const PREVIEW_MAX_ITEMS = 40;
@@ -214,7 +225,7 @@ async function handleAdminPreview(
       formText(form, 'previewSlice') === 'oldest' ? 'oldest' : 'newest';
     const result = await XMLBuilder.fetchXml(config, {
       quiet: true,
-      cacheFeedBodies: !bypass,
+      cacheFeedBodies: !isBypass,
       includeFeedChannelTitles: true,
       maxItems: PREVIEW_MAX_ITEMS,
       itemSlice,
@@ -235,13 +246,13 @@ async function handleAdminPreview(
 }
 
 async function handleUploadCover(
-  ctx: AdminRouteContext<Env>,
+  context: AdminRouteContext<Env>,
 ): Promise<Response> {
-  if (!(await isAuthenticated(ctx.request, ctx.secret))) {
+  if (!(await isAuthenticated(context.request, context.secret))) {
     return jsonError('Unauthorized', 401);
   }
 
-  const feedImageUrl = resolveCoverPublicUrl(ctx.env);
+  const feedImageUrl = resolveCoverPublicUrl(context.env);
   if (!feedImageUrl) {
     return jsonError(
       'Set R2_PUBLIC_BASE_URL or FEED_IMAGE_URL to a *.r2.dev URL in wrangler [vars], then redeploy.',
@@ -249,13 +260,14 @@ async function handleUploadCover(
     );
   }
 
-  const parsed = parseCoverFile((await ctx.request.formData()).get('file'));
+  const formData = await context.request.formData();
+  const parsed = parseCoverFile(formData.get('file') ?? undefined);
   if ('error' in parsed) {
     return jsonError(parsed.error, 400);
   }
 
   try {
-    await ctx.env.XML_BUCKET.put(
+    await context.env.XML_BUCKET.put(
       'cover.jpg',
       await parsed.file.arrayBuffer(),
       {
@@ -271,7 +283,7 @@ async function handleUploadCover(
 const admin = createAdmin<Env>({
   basePath: '/admin',
   title: 'Feed settings',
-  getSecret: (env) => env.ADMIN_SECRET,
+  getSecret: (environment) => environment.ADMIN_SECRET,
   render: ({ request, env, url }) => renderAdminPage(request, env, url),
   async save({ form, env }) {
     if (!env.CONFIG_KV) {
@@ -299,9 +311,9 @@ const admin = createAdmin<Env>({
 
 async function handleDeployTrigger(
   request: Request,
-  env: Env,
+  environment: Env,
 ): Promise<Response> {
-  const secret = env.ADMIN_SECRET;
+  const secret = environment.ADMIN_SECRET;
   if (!secret) {
     return new Response('Unauthorized', { status: 401 });
   }
@@ -309,7 +321,7 @@ async function handleDeployTrigger(
     return new Response('Unauthorized', { status: 401 });
   }
   try {
-    const status = await startRebuild(env);
+    const status = await startRebuild(environment);
     return new Response(
       `Rebuild queued (job ${status.jobId}). /podcasts.xml updates when the job finishes.`,
       { status: 200 },
@@ -324,15 +336,15 @@ async function handleDeployTrigger(
 
 async function handlePodcastsXml(
   _request: Request,
-  env: Env,
+  environment: Env,
 ): Promise<Response> {
   try {
-    const obj = await getPublishedFeedObject(env);
-    if (!obj) {
+    const object = await getPublishedFeedObject(environment);
+    if (!object) {
       return new Response('File not found', { status: 404 });
     }
 
-    return new Response(obj.body as unknown as BodyInit, {
+    return new Response(object.body as unknown as BodyInit, {
       headers: {
         'content-type': 'application/xml',
         'cache-control': 'public, max-age=3600', // 1 hours
@@ -346,13 +358,13 @@ async function handlePodcastsXml(
 
 async function handleHealthcheck(
   _request: Request,
-  env: Env,
+  environment: Env,
 ): Promise<Response> {
   try {
-    const obj = await headPublishedFeedObject(env);
+    const object = await headPublishedFeedObject(environment);
     return jsonResponse({
       status: 'healthy',
-      lastModified: obj?.uploaded,
+      lastModified: object?.uploaded,
     });
   } catch (error) {
     return jsonResponse(
@@ -373,21 +385,25 @@ const PATH_ROUTES: Record<string, RouteHandler> = {
 };
 
 export default {
-  async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext) {
+  async scheduled(
+    _event: ScheduledEvent,
+    environment: Env,
+    _context: ExecutionContext,
+  ) {
     try {
-      const status = await startRebuild(env);
+      const status = await startRebuild(environment);
       console.log(`Rebuild queued (job ${status.jobId})`);
     } catch (error) {
       console.error('Error queueing scheduled rebuild:', error);
     }
   },
 
-  async queue(batch: MessageBatch<RebuildMessage>, env: Env) {
-    await handleRebuildQueueBatch(batch, env);
+  async queue(batch: MessageBatch<RebuildMessage>, environment: Env) {
+    await handleRebuildQueueBatch(batch, environment);
   },
 
-  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    const adminResponse = await admin.fetch(request, env);
+  async fetch(request: Request, environment: Env, context: ExecutionContext) {
+    const adminResponse = await admin.fetch(request, environment);
     if (adminResponse) {
       return adminResponse;
     }
@@ -397,10 +413,10 @@ export default {
     if (!handler) {
       return new Response('Not found', { status: 404 });
     }
-    return handler(request, env, {
+    return handler(request, environment, {
       url,
       secureCookie: url.protocol === 'https:',
-      executionCtx: ctx,
+      executionCtx: context,
     });
   },
 };
