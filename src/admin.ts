@@ -1,3 +1,4 @@
+import { escapeHtml } from '@codekitties/workers-mini-admin';
 import type { AppConfig, FeedEntry } from './config';
 
 /** Shown on admin GET when we have the incoming request (deployed URL + upload eligibility). */
@@ -7,166 +8,18 @@ export type AdminPageContext = {
   coverUploadEnabled: boolean;
 };
 
-function escapeHtml(s: string): string {
-  return s
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
-}
+export const ADMIN_PAGE_HINT =
+  'Values are stored in Workers KV and override <code>wrangler.toml</code> <code>[vars]</code> when present. Preview updates as you edit; source RSS is cached (~15 minutes per URL). Use “Refresh feed sources” for the latest upstream episodes.';
 
-export function loginHtml(error?: string): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Admin login</title>
-  <style>
-    * { box-sizing: border-box; }
-    body { font-family: system-ui, -apple-system, Segoe UI, sans-serif; margin: 0; min-height: 100vh; background: #e4e6eb; color: #1a1a1a; }
-    .page-shell { max-width: 24rem; margin: 0 auto; padding: 1.25rem; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-    .card { width: 100%; background: #fff; border-radius: 12px; padding: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,.06); }
-    h1 { font-size: 1.35rem; margin: 0 0 1rem 0; }
-    label { display: block; font-weight: 600; margin-bottom: 0.35rem; }
-    input[type="password"] { width: 100%; padding: 0.65rem 0.75rem; margin: 0.25rem 0 1rem; border: 1px solid #ccc; border-radius: 8px; font: inherit; min-height: 44px; }
-    button { width: 100%; padding: 0.65rem 1rem; margin-top: 0.25rem; border: none; border-radius: 8px; background: #2d3748; color: #fff; font: inherit; font-weight: 600; cursor: pointer; min-height: 44px; }
-    button:active { opacity: .92; }
-    .err { color: #b00; margin-bottom: 1rem; font-size: 0.95rem; }
-  </style>
-</head>
-<body>
-  <div class="page-shell">
-  <div class="card">
-  <h1>RSS Combiner admin</h1>
-  ${error ? `<p class="err">${escapeHtml(error)}</p>` : ''}
-  <form method="post" action="/admin/login">
-    <label for="password">Password</label>
-    <input id="password" name="password" type="password" autocomplete="current-password" required>
-    <button type="submit">Sign in</button>
-  </form>
-  </div>
-  </div>
-</body>
-</html>`;
-}
-
-function feedFieldsetHtml(index: number, feed: FeedEntry): string {
-  const url = feed.url ? escapeHtml(feed.url) : '';
-  const cy = feed.cutoffYear ? escapeHtml(feed.cutoffYear) : '';
-  const cm = feed.cutoffMonth ? escapeHtml(feed.cutoffMonth) : '';
-  const cd = feed.cutoffDay ? escapeHtml(feed.cutoffDay) : '';
-  const ds = feed.mergeTimeline ? ' checked' : '';
-
-  return `<fieldset class="feed-row" data-feed-row>
-    <legend>Source feed ${index + 1}</legend>
-    <label>Feed URL</label>
-    <input type="url" name="feed_${index}_url" value="${url}" placeholder="https://…">
-
-    <div class="row feed-cutoffs">
-      <label>Cutoff year <input type="number" name="feed_${index}_cutoffYear" min="1970" max="2100" placeholder="optional" value="${cy}"></label>
-      <label>month <input type="number" name="feed_${index}_cutoffMonth" min="1" max="12" placeholder="optional" value="${cm}"></label>
-      <label>day <input type="number" name="feed_${index}_cutoffDay" min="1" max="31" placeholder="optional" value="${cd}"></label>
-    </div>
-    <div class="feed-merge-timeline-block">
-      <label class="feed-merge-timeline">
-        <input type="checkbox" name="feed_${index}_mergeTimeline"${ds}>
-        <span><strong>Merge this feed’s timeline</strong></span>
-      </label>
-      <p class="feed-merge-timeline-oneline">Turn on when this row’s cutoff year is <strong>older</strong> than the default cutoff year above—details in <strong>How cutoffs &amp; timeline merge work</strong>.</p>
-    </div>
-    <button type="button" class="feed-remove">Remove feed</button>
-  </fieldset>`;
-}
-
-function buildFeedsSection(config: AppConfig): string {
-  const list =
-    config.feeds.length > 0 ? config.feeds : [{ url: '' } as FeedEntry];
-  return list.map((f, i) => feedFieldsetHtml(i, f)).join('');
-}
-
-/** Template for JS: FEEDIDX replaced with row index (0, 1, …) */
-const FEED_ROW_TEMPLATE = `<fieldset class="feed-row" data-feed-row>
-    <legend>Source feed</legend>
-    <label>Feed URL</label>
-    <input type="url" name="feed_FEEDIDX_url" placeholder="https://…">
-    <div class="row feed-cutoffs">
-      <label>Cutoff year <input type="number" name="feed_FEEDIDX_cutoffYear" min="1970" max="2100" placeholder="optional"></label>
-      <label>month <input type="number" name="feed_FEEDIDX_cutoffMonth" min="1" max="12" placeholder="optional"></label>
-      <label>day <input type="number" name="feed_FEEDIDX_cutoffDay" min="1" max="31" placeholder="optional"></label>
-    </div>
-    <div class="feed-merge-timeline-block">
-      <label class="feed-merge-timeline">
-        <input type="checkbox" name="feed_FEEDIDX_mergeTimeline">
-        <span><strong>Merge this feed’s timeline</strong></span>
-      </label>
-      <p class="feed-merge-timeline-oneline">Turn on when this row’s cutoff year is <strong>older</strong> than the default cutoff year above—details in <strong>How cutoffs &amp; timeline merge work</strong>.</p>
-    </div>
-    <button type="button" class="feed-remove">Remove feed</button>
-  </fieldset>`;
-
-export function adminFormHtml(
-  config: AppConfig,
-  flash?: string,
-  ctx?: AdminPageContext,
-): string {
-  const mainChecked = config.coverMode === 'main' ? ' checked' : '';
-  const perFeedMainChecked =
-    config.coverMode === 'per_feed_main' ? ' checked' : '';
-  const sourceChecked = config.coverMode === 'source' ? ' checked' : '';
-
-  const deployedOrigin = ctx?.deployedOrigin ?? '';
-  const deployedFeedUrl = ctx?.deployedFeedUrl ?? '';
-  const showDeployHints = !!deployedOrigin;
-  const coverUploadEnabled = ctx?.coverUploadEnabled ?? false;
-  let flashClass = 'ok';
-  if (flash?.startsWith('Error:')) {
-    flashClass = 'flash-err';
-  } else if (flash?.includes('failed')) {
-    flashClass = 'warn';
-  }
-
-  return String.raw`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Feed settings</title>
-  <style>
-    * { box-sizing: border-box; }
-    .admin-body { font-family: system-ui, -apple-system, Segoe UI, sans-serif; margin: 0; line-height: 1.45; color: #1a1a1a; background: #e4e6eb; min-height: 100vh; -webkit-text-size-adjust: 100%; }
-    .page-shell { max-width: 1200px; margin: 0 auto; padding: 0.75rem 1rem 2rem; }
-    @media (min-width: 640px) { .page-shell { padding: 1rem 1.25rem 2rem; } }
-    .page-header { margin-bottom: 1rem; }
-    .page-header h1 { font-size: clamp(1.25rem, 4vw, 1.5rem); margin: 0 0 0.5rem 0; }
-    .panel-card { background: #fff; border-radius: 12px; padding: 1rem 1rem 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,.07); margin-bottom: 1rem; }
-    @media (min-width: 640px) { .panel-card { padding: 1.15rem 1.25rem 1.35rem; } }
+/** App-specific styles on top of `@codekitties/workers-mini-admin` shared CSS. */
+export const ADMIN_APP_CSS = `
     .layout { display: grid; gap: 1rem; }
     @media (min-width: 960px) {
       .layout { grid-template-columns: minmax(300px, 1fr) minmax(280px, 1fr); gap: 1.25rem; align-items: start; }
     }
     .panel { min-width: 0; }
-    label { display: block; margin-top: 1rem; font-weight: 600; font-size: 0.95rem; }
-    label:first-of-type, .panel-card > label:first-child { margin-top: 0; }
-    input[type="text"], input[type="url"], input[type="number"], textarea {
-      width: 100%; padding: 0.55rem 0.65rem; font: inherit; border: 1px solid #c5c9d0; border-radius: 8px; background: #fafbfc;
-    }
-    input:focus { outline: 2px solid #90cdf4; outline-offset: 1px; border-color: #3182ce; }
-    .row { display: flex; gap: 0.75rem; flex-wrap: wrap; }
-    .row label { flex: 1; min-width: min(100%, 5.5rem); margin-top: 0; }
-    @media (max-width: 480px) { .row { flex-direction: column; } .row label { min-width: 100%; } }
-    .hint { font-size: 0.82rem; color: #4a5568; font-weight: normal; }
-    .actions { margin-top: 1.5rem; display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
-    .btn-primary { padding: 0.6rem 1.1rem; border: none; border-radius: 8px; background: #2d3748; color: #fff; font: inherit; font-weight: 600; cursor: pointer; min-height: 44px; }
-    .btn-primary:active { opacity: .94; }
-    .btn-secondary { padding: 0.5rem 0.85rem; border: 1px solid #cbd5e0; border-radius: 8px; background: #f7fafc; font: inherit; cursor: pointer; min-height: 44px; font-size: 0.9rem; }
-    .btn-secondary:active { background: #edf2f7; }
-    .btn-ghost { padding: 0.5rem 0.75rem; border: none; background: transparent; color: #4a5568; font: inherit; cursor: pointer; text-decoration: underline; min-height: 44px; }
-    .ok { color: #276749; margin: 0 0 0.75rem 0; font-weight: 600; }
-    .warn { color: #c05600; margin: 0 0 0.75rem 0; font-weight: 600; }
-    .flash-err { color: #c53030; margin: 0 0 0.75rem 0; font-weight: 600; }
-    fieldset { border: 1px solid #d8dee6; padding: 0.75rem 1rem; margin-top: 1rem; border-radius: 8px; background: #fafbfc; }
-    legend { padding: 0 0.35rem; font-weight: 600; }
+    .panel-card { padding: 1rem 1rem 1.25rem; }
+    @media (min-width: 640px) { .panel-card { padding: 1.15rem 1.25rem 1.35rem; } }
     .feed-row { position: relative; }
     .feed-row .feed-remove { margin-top: 0.75rem; font-size: 0.9rem; }
     .feed-merge-timeline { font-weight: normal; margin-top: 0.5rem; display: flex; align-items: flex-start; gap: 0.35rem; }
@@ -222,15 +75,81 @@ export function adminFormHtml(
     #preview-xml.hidden { display: none; }
     #preview-rendered.hidden { display: none; }
     #preview-refresh-feeds { font: inherit; padding: 0.45rem 0.75rem; margin-top: 0.35rem; cursor: pointer; border-radius: 8px; border: 1px solid #cbd5e0; background: #f7fafc; min-height: 44px; }
-  </style>
-</head>
-<body class="admin-body"${showDeployHints ? ` data-deployed-origin="${escapeHtml(deployedOrigin)}"` : ''}>
-  <div class="page-shell">
-  <header class="page-header">
-    <h1>Feed settings</h1>
-    <p class="hint">Values are stored in Workers KV and override <code>wrangler.toml</code> <code>[vars]</code> when present. Preview updates as you edit; source RSS is cached (~15 minutes per URL). Use “Refresh feed sources” for the latest upstream episodes.</p>
-  </header>
-  ${flash ? `<p class="${flashClass}">${escapeHtml(flash)}</p>` : ''}
+`;
+
+function feedFieldsetHtml(index: number, feed: FeedEntry): string {
+  const url = feed.url ? escapeHtml(feed.url) : '';
+  const cy = feed.cutoffYear ? escapeHtml(feed.cutoffYear) : '';
+  const cm = feed.cutoffMonth ? escapeHtml(feed.cutoffMonth) : '';
+  const cd = feed.cutoffDay ? escapeHtml(feed.cutoffDay) : '';
+  const ds = feed.mergeTimeline ? ' checked' : '';
+
+  return `<fieldset class="feed-row" data-feed-row>
+    <legend>Source feed ${index + 1}</legend>
+    <label>Feed URL</label>
+    <input type="url" name="feed_${index}_url" value="${url}" placeholder="https://…">
+
+    <div class="row feed-cutoffs">
+      <label>Cutoff year <input type="number" name="feed_${index}_cutoffYear" min="1970" max="2100" placeholder="optional" value="${cy}"></label>
+      <label>month <input type="number" name="feed_${index}_cutoffMonth" min="1" max="12" placeholder="optional" value="${cm}"></label>
+      <label>day <input type="number" name="feed_${index}_cutoffDay" min="1" max="31" placeholder="optional" value="${cd}"></label>
+    </div>
+    <div class="feed-merge-timeline-block">
+      <label class="feed-merge-timeline">
+        <input type="checkbox" name="feed_${index}_mergeTimeline"${ds}>
+        <span><strong>Merge this feed’s timeline</strong></span>
+      </label>
+      <p class="feed-merge-timeline-oneline">Turn on when this row’s cutoff year is <strong>older</strong> than the default cutoff year above—details in <strong>How cutoffs &amp; timeline merge work</strong>.</p>
+    </div>
+    <button type="button" class="feed-remove">Remove feed</button>
+  </fieldset>`;
+}
+
+function buildFeedsSection(config: AppConfig): string {
+  const list =
+    config.feeds.length > 0 ? config.feeds : [{ url: '' } as FeedEntry];
+  return list.map((f, i) => feedFieldsetHtml(i, f)).join('');
+}
+
+/** Template for JS: FEEDIDX replaced with row index (0, 1, …) */
+const FEED_ROW_TEMPLATE = `<fieldset class="feed-row" data-feed-row>
+    <legend>Source feed</legend>
+    <label>Feed URL</label>
+    <input type="url" name="feed_FEEDIDX_url" placeholder="https://…">
+    <div class="row feed-cutoffs">
+      <label>Cutoff year <input type="number" name="feed_FEEDIDX_cutoffYear" min="1970" max="2100" placeholder="optional"></label>
+      <label>month <input type="number" name="feed_FEEDIDX_cutoffMonth" min="1" max="12" placeholder="optional"></label>
+      <label>day <input type="number" name="feed_FEEDIDX_cutoffDay" min="1" max="31" placeholder="optional"></label>
+    </div>
+    <div class="feed-merge-timeline-block">
+      <label class="feed-merge-timeline">
+        <input type="checkbox" name="feed_FEEDIDX_mergeTimeline">
+        <span><strong>Merge this feed’s timeline</strong></span>
+      </label>
+      <p class="feed-merge-timeline-oneline">Turn on when this row’s cutoff year is <strong>older</strong> than the default cutoff year above—details in <strong>How cutoffs &amp; timeline merge work</strong>.</p>
+    </div>
+    <button type="button" class="feed-remove">Remove feed</button>
+  </fieldset>`;
+
+/**
+ * Inner admin UI for `createAdmin` (`wrapBody: false`).
+ * Chrome (title, flash, logout) comes from workers-mini-admin.
+ */
+export function adminSettingsBody(
+  config: AppConfig,
+  ctx?: AdminPageContext,
+): string {
+  const mainChecked = config.coverMode === 'main' ? ' checked' : '';
+  const perFeedMainChecked =
+    config.coverMode === 'per_feed_main' ? ' checked' : '';
+  const sourceChecked = config.coverMode === 'source' ? ' checked' : '';
+
+  const deployedOrigin = ctx?.deployedOrigin ?? '';
+  const deployedFeedUrl = ctx?.deployedFeedUrl ?? '';
+  const showDeployHints = !!deployedOrigin;
+  const coverUploadEnabled = ctx?.coverUploadEnabled ?? false;
+
+  return String.raw`
   <div class="layout">
   <div class="panel">
   <form id="admin-settings-form" method="post" action="/admin">
@@ -297,9 +216,6 @@ export function adminFormHtml(
       <button type="submit" class="btn-primary">Save to KV</button>
     </div>
     </div>
-  </form>
-  <form method="post" action="/admin/logout" style="margin-top:0.75rem">
-    <button type="submit" class="btn-ghost">Sign out</button>
   </form>
   <p class="hint" style="margin-top:0.75rem">Saving writes settings to KV and queues a rebuild (one source feed per job, then merge). Refresh this page for status; <code>/podcasts.xml</code> updates when the job finishes. Hourly cron and authenticated <code>/deploy-trigger</code> also enqueue rebuilds.</p>
   </div>
@@ -691,7 +607,5 @@ export function adminFormHtml(
     }
   })();
   </script>
-  </div>
-</body>
-</html>`;
+`;
 }

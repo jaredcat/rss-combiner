@@ -1,3 +1,9 @@
+import {
+  createAdmin,
+  formText,
+  isAuthenticated,
+  type AdminRouteContext,
+} from '@codekitties/workers-mini-admin';
 import type {
   ExecutionContext,
   KVNamespace,
@@ -6,11 +12,15 @@ import type {
   R2Bucket,
   ScheduledEvent,
 } from '@cloudflare/workers-types';
-import { adminFormHtml, loginHtml, type AdminPageContext } from './admin';
+import {
+  ADMIN_APP_CSS,
+  ADMIN_PAGE_HINT,
+  adminSettingsBody,
+  type AdminPageContext,
+} from './admin';
 import {
   CONFIG_KV_KEY,
   appConfigToStored,
-  formText,
   parseCoverMode,
   parseFeedsFromFormData,
   resolveConfig,
@@ -43,60 +53,6 @@ export interface Env {
   DEFAULT_CUTOFF_DATE_YEAR: string;
   FEED_INDEX_PADDING: string;
   [key: string]: string | R2Bucket | KVNamespace | Queue<RebuildMessage> | undefined;
-}
-
-async function hexSha256(secret: string): Promise<string> {
-  const buf = await crypto.subtle.digest(
-    'SHA-256',
-    new TextEncoder().encode(secret),
-  );
-  return [...new Uint8Array(buf)]
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-  let out = 0;
-  for (let i = 0; i < a.length; i++) {
-    out |= (a.codePointAt(i) ?? 0) ^ (b.codePointAt(i) ?? 0);
-  }
-  return out === 0;
-}
-
-async function isAdminAuthenticated(
-  request: Request,
-  env: Env,
-): Promise<boolean> {
-  const secret = env.ADMIN_SECRET;
-  if (!secret) {
-    return false;
-  }
-
-  const auth = request.headers.get('Authorization');
-  if (auth?.startsWith('Bearer ')) {
-    const token = auth.slice(7);
-    if (timingSafeEqual(token, secret)) {
-      return true;
-    }
-  }
-
-  const cookie = request.headers.get('Cookie') || '';
-  const match = /(?:^|;\s*)admin_auth=([^;]+)/.exec(cookie);
-  if (!match) {
-    return false;
-  }
-  const expected = await hexSha256(secret);
-  return timingSafeEqual(match[1], expected);
-}
-
-function adminDisabledResponse(): Response {
-  return new Response(
-    'Admin UI is disabled. Set the ADMIN_SECRET secret (wrangler secret put ADMIN_SECRET).',
-    { status: 503, headers: { 'content-type': 'text/plain; charset=utf-8' } },
-  );
 }
 
 /** Public URL for cover.jpg after upload; null if we cannot derive an R2 public URL. */
@@ -182,7 +138,6 @@ type RouteHandler = (
   ctx: RequestContext,
 ) => Promise<Response>;
 
-const HTML_CONTENT_TYPE = 'text/html; charset=utf-8';
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
 
 function normalizePath(pathname: string): string {
@@ -191,13 +146,6 @@ function normalizePath(pathname: string): string {
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
-}
-
-function htmlResponse(body: string, status = 200): Response {
-  return new Response(body, {
-    status,
-    headers: { 'content-type': HTML_CONTENT_TYPE },
-  });
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -209,41 +157,6 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function jsonError(error: string, status: number): Response {
   return jsonResponse({ ok: false, error }, status);
-}
-
-function redirect(location: string, cookie?: string): Response {
-  const headers: Record<string, string> = { Location: location };
-  if (cookie) {
-    headers['Set-Cookie'] = cookie;
-  }
-  return new Response(null, { status: 302, headers });
-}
-
-function adminAuthCookie(
-  token: string,
-  secure: boolean,
-  maxAge: number,
-): string {
-  const secureFlag = secure ? 'Secure; ' : '';
-  return `admin_auth=${token}; HttpOnly; ${secureFlag}SameSite=Lax; Max-Age=${maxAge}; Path=/`;
-}
-
-async function requireAdmin(
-  request: Request,
-  env: Env,
-  unauthorized: Response,
-): Promise<Response | undefined> {
-  if (!env.ADMIN_SECRET) {
-    return adminDisabledResponse();
-  }
-  if (!(await isAdminAuthenticated(request, env))) {
-    return unauthorized;
-  }
-}
-
-function formPassword(form: FormData): string {
-  const value = form.get('password');
-  return typeof value === 'string' ? value : '';
 }
 
 function parseCoverFile(
@@ -261,50 +174,39 @@ function parseCoverFile(
   return { file };
 }
 
-async function handleAdminLogin(
-  request: Request,
-  env: Env,
-  ctx: RequestContext,
-): Promise<Response> {
-  if (!env.ADMIN_SECRET) {
-    return adminDisabledResponse();
-  }
-  const password = formPassword(await request.formData());
-  if (!timingSafeEqual(password, env.ADMIN_SECRET)) {
-    return htmlResponse(loginHtml('Invalid password'), 401);
-  }
-  const token = await hexSha256(env.ADMIN_SECRET);
-  return redirect('/admin', adminAuthCookie(token, ctx.secureCookie, 86400));
-}
-
-async function handleAdminLogout(
-  _request: Request,
-  _env: Env,
-  ctx: RequestContext,
-): Promise<Response> {
-  return redirect('/admin', adminAuthCookie('', ctx.secureCookie, 0));
+async function renderAdminPage(request: Request, env: Env, url: URL) {
+  const config = await resolveConfig(env, env.CONFIG_KV);
+  const saved = url.searchParams.get('saved') === '1';
+  const rebuild = await getRebuildStatus(env);
+  const flash = rebuildStatusFlash(rebuild, { saved });
+  const ctx = adminPageContext(request, env);
+  return {
+    hint: ADMIN_PAGE_HINT,
+    flash,
+    shellMaxWidth: '1200px',
+    wrapBody: false,
+    extraCss: ADMIN_APP_CSS,
+    bodyAttrs: ctx.deployedOrigin
+      ? { 'data-deployed-origin': ctx.deployedOrigin }
+      : undefined,
+    body: adminSettingsBody(config, ctx),
+  };
 }
 
 async function handleAdminPreview(
-  request: Request,
-  env: Env,
+  ctx: AdminRouteContext<Env>,
 ): Promise<Response> {
-  const denied = await requireAdmin(
-    request,
-    env,
-    jsonError('Unauthorized', 401),
-  );
-  if (denied) {
-    return denied;
+  if (!(await isAuthenticated(ctx.request, ctx.secret))) {
+    return jsonError('Unauthorized', 401);
   }
 
-  const form = await request.formData();
+  const form = await ctx.request.formData();
   try {
     const bypass = form.get('bypassFeedCache') === '1';
     if (bypass) {
       clearPreviewFeedMemoryCache();
     }
-    const config = appConfigFromFormData(form, env);
+    const config = appConfigFromFormData(form, ctx.env);
     // Full feeds can be multi‑MB; returning that as JSON OOMs / exceeds limits.
     // Preview returns a 40-episode slice (cron/save still build the full feed).
     const PREVIEW_MAX_ITEMS = 40;
@@ -333,19 +235,13 @@ async function handleAdminPreview(
 }
 
 async function handleUploadCover(
-  request: Request,
-  env: Env,
+  ctx: AdminRouteContext<Env>,
 ): Promise<Response> {
-  const denied = await requireAdmin(
-    request,
-    env,
-    jsonError('Unauthorized', 401),
-  );
-  if (denied) {
-    return denied;
+  if (!(await isAuthenticated(ctx.request, ctx.secret))) {
+    return jsonError('Unauthorized', 401);
   }
 
-  const feedImageUrl = resolveCoverPublicUrl(env);
+  const feedImageUrl = resolveCoverPublicUrl(ctx.env);
   if (!feedImageUrl) {
     return jsonError(
       'Set R2_PUBLIC_BASE_URL or FEED_IMAGE_URL to a *.r2.dev URL in wrangler [vars], then redeploy.',
@@ -353,39 +249,34 @@ async function handleUploadCover(
     );
   }
 
-  const parsed = parseCoverFile((await request.formData()).get('file'));
+  const parsed = parseCoverFile((await ctx.request.formData()).get('file'));
   if ('error' in parsed) {
     return jsonError(parsed.error, 400);
   }
 
   try {
-    await env.XML_BUCKET.put('cover.jpg', await parsed.file.arrayBuffer(), {
-      httpMetadata: { contentType: parsed.file.type },
-    });
+    await ctx.env.XML_BUCKET.put(
+      'cover.jpg',
+      await parsed.file.arrayBuffer(),
+      {
+        httpMetadata: { contentType: parsed.file.type },
+      },
+    );
     return jsonResponse({ ok: true, feedImageUrl });
   } catch (error) {
     return jsonError(errorMessage(error, 'Upload failed'), 500);
   }
 }
 
-async function handleAdminSave(
-  request: Request,
-  env: Env,
-): Promise<Response> {
-  const denied = await requireAdmin(
-    request,
-    env,
-    htmlResponse(loginHtml('Sign in required'), 401),
-  );
-  if (denied) {
-    return denied;
-  }
-  if (!env.CONFIG_KV) {
-    return new Response('CONFIG_KV binding missing', { status: 500 });
-  }
-
-  const form = await request.formData();
-  try {
+const admin = createAdmin<Env>({
+  basePath: '/admin',
+  title: 'Feed settings',
+  getSecret: (env) => env.ADMIN_SECRET,
+  render: ({ request, env, url }) => renderAdminPage(request, env, url),
+  async save({ form, env }) {
+    if (!env.CONFIG_KV) {
+      throw new Error('CONFIG_KV binding missing');
+    }
     if (!formText(form, 'publicBaseUrl')) {
       throw new Error('Public base URL is required');
     }
@@ -397,52 +288,25 @@ async function handleAdminSave(
     );
     // Full rebuild runs as a chain of queue jobs (one feed per invocation).
     await startRebuild(env);
-    return redirect('/admin?saved=1');
-  } catch (error) {
-    const current = await resolveConfig(env, env.CONFIG_KV);
-    return htmlResponse(
-      adminFormHtml(
-        current,
-        `Error: ${errorMessage(error, 'Invalid input')}`,
-        adminPageContext(request, env),
-      ),
-      400,
-    );
-  }
-}
-
-async function handleAdminGet(
-  request: Request,
-  env: Env,
-  ctx: RequestContext,
-): Promise<Response> {
-  const denied = await requireAdmin(request, env, htmlResponse(loginHtml()));
-  if (denied) {
-    return denied;
-  }
-  const config = await resolveConfig(env, env.CONFIG_KV);
-  const saved = ctx.url.searchParams.get('saved') === '1';
-  const rebuild = await getRebuildStatus(env);
-  return htmlResponse(
-    adminFormHtml(
-      config,
-      rebuildStatusFlash(rebuild, { saved }),
-      adminPageContext(request, env),
-    ),
-  );
-}
+    const rebuild = await getRebuildStatus(env);
+    return { flash: rebuildStatusFlash(rebuild, { saved: true }) };
+  },
+  routes: {
+    'POST /preview': handleAdminPreview,
+    'POST /upload-cover': handleUploadCover,
+  },
+});
 
 async function handleDeployTrigger(
   request: Request,
   env: Env,
 ): Promise<Response> {
-  const denied = await requireAdmin(
-    request,
-    env,
-    new Response('Unauthorized', { status: 401 }),
-  );
-  if (denied) {
-    return denied;
+  const secret = env.ADMIN_SECRET;
+  if (!secret) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+  if (!(await isAuthenticated(request, secret))) {
+    return new Response('Unauthorized', { status: 401 });
   }
   try {
     const status = await startRebuild(env);
@@ -501,29 +365,12 @@ async function handleHealthcheck(
   }
 }
 
-const METHOD_ROUTES: Record<string, RouteHandler> = {
-  'POST /admin/login': handleAdminLogin,
-  'POST /admin/logout': handleAdminLogout,
-  'POST /admin/preview': handleAdminPreview,
-  'POST /admin/upload-cover': handleUploadCover,
-  'POST /admin': handleAdminSave,
-  'GET /admin': handleAdminGet,
-};
-
 const PATH_ROUTES: Record<string, RouteHandler> = {
   '/deploy-trigger': handleDeployTrigger,
   '/': handlePodcastsXml,
   '/podcasts.xml': handlePodcastsXml,
   '/healthcheck': handleHealthcheck,
 };
-
-function getRouteHandler(method: string, path: string): RouteHandler | undefined {
-  const byMethod = METHOD_ROUTES[`${method} ${path}`];
-  if (byMethod) {
-    return byMethod;
-  }
-  return PATH_ROUTES[path];
-}
 
 export default {
   async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext) {
@@ -540,11 +387,13 @@ export default {
   },
 
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    const adminResponse = await admin.fetch(request, env);
+    if (adminResponse) {
+      return adminResponse;
+    }
+
     const url = new URL(request.url);
-    const handler = getRouteHandler(
-      request.method,
-      normalizePath(url.pathname),
-    );
+    const handler = PATH_ROUTES[normalizePath(url.pathname)];
     if (!handler) {
       return new Response('Not found', { status: 404 });
     }
