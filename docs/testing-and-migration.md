@@ -60,7 +60,7 @@ A deploy with the same `name` **updates** that Worker in place. If you use a **n
 
 ### 2. R2 bucket
 
-Set `bucket_name` to your **existing** bucket name so the Worker keeps using the same `podcasts.xml` and cover objects:
+Set `bucket_name` to your **existing** bucket name so the Worker keeps using the same cover object and the legacy `podcasts.xml` mirror in R2. The public URL follows the output filename (`/feed.xml` unless you set `podcasts.xml`):
 
 ```toml
 [[r2_buckets]]
@@ -107,15 +107,16 @@ If the old Worker used a **custom domain** or **routes**, re-check **Workers & P
 
 1. Test on a **fork** or **staging** Worker name first (optional but recommended).
 2. When ready, set `name`, `bucket_name`, and **real KV `id`** in `wrangler.toml`, align `[vars]`, merge, and let Actions deploy (or deploy locally).
-3. Confirm `https://<worker>/admin` and `https://<worker>/podcasts.xml`.
+3. Confirm `https://<worker>/admin` and `https://<worker>/feed.xml` (or `/podcasts.xml` if you set that output filename).
 
 ---
 
 ## Quick checklist
 
-| Item                        | Action                                                        |
-| --------------------------- | ------------------------------------------------------------- |
-| Same Worker URL             | `name` = existing Worker name                                 |
-| Same RSS file / cover in R2 | `bucket_name` = existing bucket                               |
-| Keep admin settings         | Real KV `id` in `wrangler.toml`, not placeholder              |
-| Same `/admin` password      | `ADMIN_SECRET` in GitHub + workflow, or `wrangler secret put` |
+| Item                        | Action                                                                 |
+| --------------------------- | ---------------------------------------------------------------------- |
+| Same Worker URL             | `name` = existing Worker name                                          |
+| Same RSS file / cover in R2 | `bucket_name` = existing bucket                                        |
+| Keep admin settings         | Real KV `id` in `wrangler.toml`, not placeholder                       |
+| Same `/admin` password      | `ADMIN_SECRET` in GitHub + workflow, or `wrangler secret put`          |
+| Version 1 feed URL          | Set output filename to `podcasts.xml` in `/admin` or `OUTPUT_FILENAME` |

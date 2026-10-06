@@ -29,6 +29,7 @@ interface RssItem {
   description?: unknown;
   pubDate?: unknown;
   enclosure?: RssEnclosure;
+  'content:encoded'?: unknown;
   'itunes:duration'?: unknown;
   'itunes:image'?: { '@_href'?: string };
   'itunes:explicit'?: unknown;
@@ -58,6 +59,7 @@ export interface CustomItem {
   };
   description?: string;
   summary?: string;
+  contentEncoded?: string;
   pubDate: string;
   enclosure?: {
     url: string;
@@ -261,6 +263,9 @@ async function parseFeed(
               }
             : undefined,
           description: isLightweight ? '' : normalizeRssText(item.description),
+          contentEncoded: isLightweight
+            ? undefined
+            : normalizeRssText(item['content:encoded']) || undefined,
           pubDate: sortDate.toUTCString(), // Use adjusted date
           pubDateOriginal: originalDate.toUTCString(), // Keep original date
           enclosure: item.enclosure
@@ -340,15 +345,25 @@ function selectPreviewItems<T>(
   };
 }
 
+function contentEncodedElement(
+  html: string | undefined,
+): { 'content:encoded': { _cdata: string } } | undefined {
+  return html ? { 'content:encoded': { _cdata: html } } : undefined;
+}
+
 function createRssChannel(config: AppConfig): RSS {
   const feedImageUrl = config.feedImageUrl;
   const feedTitle = config.feedTitle;
   const base = config.publicBaseUrl.replace(/\/$/, '');
-  const feedUrl = `${base}/podcasts.xml`;
+  const feedUrl = `${base}/${config.outputFilename}`;
+  const isPodcast = config.feedType === 'podcast';
+  const fallbackTitle = isPodcast ? 'Combined Podcast Feed' : 'Combined Feed';
 
   return new RSS({
-    title: feedTitle || 'My Combined Podcast Feed',
-    description: 'A combined feed of all my favorite podcasts',
+    title: feedTitle || fallbackTitle,
+    description: isPodcast
+      ? 'A combined feed of all my favorite podcasts'
+      : 'A combined RSS feed',
     feed_url: feedUrl,
     site_url: base,
     generator: 'Cloudflare Worker RSS Combiner',
@@ -357,25 +372,28 @@ function createRssChannel(config: AppConfig): RSS {
       image_url: feedImageUrl,
       image: {
         url: feedImageUrl,
-        title: feedTitle || 'My Combined Podcast Feed',
+        title: feedTitle || fallbackTitle,
         link: base,
       },
     }),
     custom_namespaces: {
       // Podcast namespace URIs are historically http:// (not fetch URLs).
-
-      itunes: 'https://www.itunes.com/dtds/podcast-1.0.dtd',
+      ...(isPodcast && {
+        itunes: 'https://www.itunes.com/dtds/podcast-1.0.dtd',
+      }),
       content: 'https://purl.org/rss/1.0/modules/content/',
     },
-    custom_elements: [
-      { 'itunes:author': 'RSS Feed Combiner' },
-      { 'itunes:explicit': 'false' },
-      { 'itunes:type': 'episodic' },
-      { 'itunes:category': { _attr: { text: 'Technology' } } },
-      ...(feedImageUrl
-        ? [{ 'itunes:image': { _attr: { href: feedImageUrl } } }]
-        : []),
-    ],
+    custom_elements: isPodcast
+      ? [
+          { 'itunes:author': 'RSS Feed Combiner' },
+          { 'itunes:explicit': 'false' },
+          { 'itunes:type': 'episodic' },
+          { 'itunes:category': { _attr: { text: 'Technology' } } },
+          ...(feedImageUrl
+            ? [{ 'itunes:image': { _attr: { href: feedImageUrl } } }]
+            : []),
+        ]
+      : [],
   });
 }
 
@@ -389,6 +407,7 @@ function appendEpisodesToRss(
     return;
   }
 
+  const isPodcast = config.feedType === 'podcast';
   let episode = 0;
   let season = 1;
   let currentSeasonMonth = new Date(
@@ -401,25 +420,32 @@ function appendEpisodesToRss(
     feedImage,
   } of itemsForOutput) {
     const itemTitle = `${item.title || ''} - ${sourceFeedTitle}`;
-    episode++;
-
-    const itemMonth = new Date(item.pubDate).getUTCMonth();
-    if (itemMonth !== currentSeasonMonth) {
-      season++;
-      currentSeasonMonth = itemMonth;
-    }
-
-    const imgElement = episodeItunesImageElements(
-      config.coverMode,
-      config.feedImageUrl,
-      item['itunes:image'] || '',
-      feedImage,
-    );
-
     const body =
       options?.lightweight === true
         ? ''
         : item.description || item.summary || '';
+    const encoded = contentEncodedElement(
+      options?.lightweight === true ? undefined : item.contentEncoded,
+    );
+
+    if (isPodcast) {
+      episode++;
+      const itemMonth = new Date(item.pubDate).getUTCMonth();
+      if (itemMonth !== currentSeasonMonth) {
+        season++;
+        currentSeasonMonth = itemMonth;
+      }
+    }
+
+    const imgElement = isPodcast
+      ? episodeItunesImageElements(
+          config.coverMode,
+          config.feedImageUrl,
+          item['itunes:image'] || '',
+          feedImage,
+        )
+      : undefined;
+
     feed.item({
       title: itemTitle,
       description: body,
@@ -428,15 +454,20 @@ function appendEpisodesToRss(
       date: new Date(item.pubDate),
       enclosure: item.enclosure,
       custom_elements: [
-        { 'itunes:title': itemTitle },
-        { 'itunes:duration': item['itunes:duration'] ?? '' },
-        { 'itunes:summary': body },
-        { 'itunes:episodeType': item['itunes:episodeType'] ?? 'full' },
-        { 'itunes:explicit': item['itunes:explicit'] ?? 'false' },
-        { 'itunes:season': item['itunes:season'] ?? season },
-        { 'itunes:episode': item['itunes:episode'] ?? episode },
+        ...(isPodcast
+          ? [
+              { 'itunes:title': itemTitle },
+              { 'itunes:duration': item['itunes:duration'] ?? '' },
+              { 'itunes:summary': body },
+              { 'itunes:episodeType': item['itunes:episodeType'] ?? 'full' },
+              { 'itunes:explicit': item['itunes:explicit'] ?? 'false' },
+              { 'itunes:season': item['itunes:season'] ?? season },
+              { 'itunes:episode': item['itunes:episode'] ?? episode },
+              imgElement,
+            ]
+          : []),
+        encoded,
         { pubDateOriginal: item.pubDateOriginal },
-        imgElement,
       ].filter(Boolean),
     });
   }
@@ -494,7 +525,7 @@ export async function parseAndFilterFeed(
 }
 
 /**
-Merge episode lists, sort deterministically, and build podcasts.xml.
+Merge episode lists, sort deterministically, and build the combined RSS document.
 */
 export function buildPodcastsXml(
   config: AppConfig,

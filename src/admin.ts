@@ -149,6 +149,8 @@ export function adminSettingsBody(
   const perFeedMainChecked =
     config.coverMode === 'per_feed_main' ? ' checked' : '';
   const sourceChecked = config.coverMode === 'source' ? ' checked' : '';
+  const podcastTypeSelected = config.feedType === 'podcast' ? ' selected' : '';
+  const genericTypeSelected = config.feedType === 'generic' ? ' selected' : '';
 
   const deployedOrigin = context?.deployedOrigin ?? '';
   const deployedFeedUrl = context?.deployedFeedUrl ?? '';
@@ -165,7 +167,7 @@ export function adminSettingsBody(
         ? `<div class="deployed-url-card">
       <p class="deployed-label">This deployment</p>
       <p class="deployed-line"><span class="k">Worker URL</span> <code>${escapeHtml(deployedOrigin)}</code></p>
-      <p class="deployed-line"><span class="k">Combined RSS</span> <code>${escapeHtml(deployedFeedUrl)}</code></p>
+      <p class="deployed-line"><span class="k">Combined RSS</span> <code id="deployed-feed-url">${escapeHtml(deployedFeedUrl)}</code></p>
       <button type="button" class="btn-secondary" id="use-deployed-base">Use worker URL as public base</button>
     </div>`
         : ''
@@ -174,7 +176,18 @@ export function adminSettingsBody(
     <label for="feedTitle">Feed title</label>
     <input id="feedTitle" name="feedTitle" type="text" value="${escapeHtml(config.feedTitle)}" required>
 
-    <label for="feedImageUrl">Main podcast image URL <span class="hint">(channel &amp; episode art when using “main cover” mode)</span></label>
+    <label for="feedType">Feed type</label>
+    <select id="feedType" name="feedType">
+      <option value="podcast"${podcastTypeSelected}>Podcast</option>
+      <option value="generic"${genericTypeSelected}>Generic RSS</option>
+    </select>
+    <p class="hint">One type for the whole combined feed. Every source is merged the same way, and podcast and blog URLs can sit in the same list — nothing checks that a URL “is” a podcast. <strong>Podcast</strong> adds iTunes season, episode, and artwork tags (use this for podcast apps). <strong>Generic RSS</strong> keeps titles, links, descriptions, enclosures, and <code>content:encoded</code> without those tags. Item titles include the source feed name in both modes.</p>
+
+    <label for="outputFilename">Output filename <span class="hint">(public path; also served at <code>/</code>)</span></label>
+    <input id="outputFilename" name="outputFilename" type="text" value="${escapeHtml(config.outputFilename)}" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,62}\.xml" required spellcheck="false">
+    <p class="hint">Default is <code>feed.xml</code>. If subscribers already use the version 1 URL, set this to <code>podcasts.xml</code> and save.</p>
+
+    <label for="feedImageUrl">Main image URL <span class="hint">(channel image; episode art in podcast mode when using “main cover”)</span></label>
     <input id="feedImageUrl" name="feedImageUrl" type="url" value="${escapeHtml(config.feedImageUrl || '')}" placeholder="https://…">
     ${
       isCoverUploadEnabled
@@ -197,7 +210,8 @@ export function adminSettingsBody(
     </div>
 
     <fieldset>
-      <legend>Episode artwork</legend>
+      <legend>Item artwork</legend>
+      <p class="hint">Podcast mode writes these as <code>itunes:image</code> on each item. Generic RSS uses the main image as the channel image only.</p>
       <label><input type="radio" name="coverMode" value="source"${sourceChecked}> Use source episode / feed artwork</label>
       <label><input type="radio" name="coverMode" value="per_feed_main"${perFeedMainChecked}> Use each source podcast’s channel (main) cover for all episodes from that feed</label>
       <label><input type="radio" name="coverMode" value="main"${mainChecked}> Use combined feed’s main image for every episode</label>
@@ -205,7 +219,7 @@ export function adminSettingsBody(
 
     <fieldset>
       <legend>Source feeds</legend>
-      <p class="hint">Add one row per podcast RSS URL. Use the cutoff fields to only include episodes published <em>after</em> that date (leave blank to use the default cutoff from the top of the form). After preview, each row’s heading shows that source’s RSS channel title (not stored; updates when you preview).</p>
+      <p class="hint">Add one row per RSS 2.0 URL. Use the cutoff fields to only include items published <em>after</em> that date (leave blank to use the default cutoff from the top of the form). After preview, each row’s heading shows that source’s RSS channel title (not stored; updates when you preview).</p>
       <details class="feed-merge-timeline-explainer">
         <summary>How cutoffs &amp; timeline merge work</summary>
         <div class="hint">
@@ -223,7 +237,7 @@ export function adminSettingsBody(
     </div>
     </div>
   </form>
-  <p class="hint" style="margin-top:0.75rem">Saving writes settings to KV and queues a rebuild (one source feed per job, then merge). Refresh this page for status; <code>/podcasts.xml</code> updates when the job finishes. Hourly cron and authenticated <code>/deploy-trigger</code> also enqueue rebuilds.</p>
+  <p class="hint" style="margin-top:0.75rem">Saving writes settings to KV and queues a rebuild (one source feed per job, then merge). Refresh this page for status; <code id="output-path-label">/${escapeHtml(config.outputFilename)}</code> updates when the job finishes. Hourly cron and authenticated <code>/deploy-trigger</code> also enqueue rebuilds.</p>
   </div>
   <div class="panel" id="preview-wrap">
     <div class="panel-card">
@@ -576,6 +590,18 @@ export function adminSettingsBody(
     runPreview(false);
 
     var origin = document.body.getAttribute('data-deployed-origin');
+    var outputName = document.getElementById('outputFilename');
+    var outputLabel = document.getElementById('output-path-label');
+    var deployedFeed = document.getElementById('deployed-feed-url');
+    function syncOutputPath() {
+      var name = outputName && outputName.value.trim() ? outputName.value.trim() : 'feed.xml';
+      if (outputLabel) outputLabel.textContent = '/' + name;
+      if (deployedFeed && origin) {
+        deployedFeed.textContent = origin.replace(/\/$/, '') + '/' + name;
+      }
+    }
+    if (outputName) outputName.addEventListener('input', syncOutputPath);
+
     var useBase = document.getElementById('use-deployed-base');
     var pub = document.getElementById('publicBaseUrl');
     if (useBase && pub && origin) {

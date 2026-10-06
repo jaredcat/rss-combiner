@@ -7,7 +7,7 @@ import type {
   R2Object,
   R2ObjectBody,
 } from '@cloudflare/workers-types';
-import { resolveConfig } from './config';
+import { feedPublicPath, resolveConfig } from './config';
 import type { Env as Environment } from './worker';
 import {
   buildPodcastsXml,
@@ -847,12 +847,13 @@ Human-readable admin flash from KV rebuild status.
 */
 export function rebuildStatusFlash(
   status: RebuildStatus | undefined,
-  options?: { saved?: boolean },
+  options?: { saved?: boolean; outputFilename?: string },
 ): string | undefined {
   const isSaved = options?.saved === true;
   if (!status) {
+    const path = feedPublicPath(options?.outputFilename ?? '');
     return isSaved
-      ? 'Saved to KV. Rebuild queued — /podcasts.xml updates when the job finishes.'
+      ? `Saved to KV. Rebuild queued — ${path} updates when the job finishes.`
       : undefined;
   }
   switch (status.status) {

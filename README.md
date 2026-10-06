@@ -1,6 +1,6 @@
 # RSS Combiner
 
-A Cloudflare Worker-based RSS feed combiner that allows you to merge multiple podcast feeds into a single, unified feed. Perfect for consolidating your favorite podcasts or creating custom podcast collections.
+A Cloudflare Worker that merges multiple RSS 2.0 feeds into one. **Podcast** mode writes an iTunes-style feed for podcast apps. **Generic RSS** mode writes a plain combined feed for ordinary readers. Sources can be mixed; the feed type is a single setting for the whole output.
 
 ## Features
 
@@ -11,7 +11,7 @@ A Cloudflare Worker-based RSS feed combiner that allows you to merge multiple po
 - 📦 **R2 Image Hosting**: Upload cover images directly to your R2 bucket
 - ☁️ **Cloudflare R2 Storage**: Fast, global content delivery
 - 🎯 **Health Checks**: Built-in monitoring endpoints
-- ⚙️ **Web admin** (`/admin`): Password-protected UI backed by Workers KV (feed title, artwork, feed list, episode cover mode) — the intended way to configure feeds after deploy
+- ⚙️ **Web admin** (`/admin`): Password-protected UI backed by Workers KV (feed type, output filename, title, artwork, feed list, cover mode) — the intended way to configure feeds after deploy
 - 🚀 **GitHub Actions Deployment**: Deploy entirely through GitHub (no local setup required!)
 - 🛠️ **Local Development**: Test and preview feeds locally before deployment
 
@@ -29,7 +29,7 @@ The easiest way to deploy your RSS combiner is entirely through GitHub Actions:
 2. Use this template to create **your** repository (not the template source — that name is special; see the setup guide).
 3. Add GitHub secrets: `CLOUDFLARE_API_TOKEN`, and **`ADMIN_SECRET`** (password for `/admin`).
 4. Edit `wrangler.toml` once: unique **`name`** (Worker URL) and **`bucket_name`** (R2), then push to `main`.
-5. Open **`https://<your-worker-name>.workers.dev/admin`**, add podcast RSS URLs, save — a queue rebuild writes **`/podcasts.xml`** when it finishes (KV, R2, and the rebuild Queue are set up by the workflow). Queues usually need **Workers Paid** to enable.
+5. Open **`https://<your-worker-name>.workers.dev/admin`**, add RSS URLs, save — a queue rebuild writes **`/feed.xml`** when it finishes (KV, R2, and the rebuild Queue are set up by the workflow). Queues usually need **Workers Paid** to enable. Upgrading from 1.x: set the output filename to `podcasts.xml` if subscribers already use that URL.
 
 Optional: upload `cover.jpg` in the repo, or set `R2_PUBLIC_BASE_URL` for in-admin cover upload (see [GitHub Actions setup](docs/github-actions-setup.md)).
 
@@ -136,7 +136,9 @@ FEED_02_URL = "https://example.com/feed2.xml"
 ### 6. Access Your Combined Feed
 
 Your combined RSS feed will be available at:
-`https://your-worker-name.your-subdomain.workers.dev/podcasts.xml`
+`https://your-worker-name.your-subdomain.workers.dev/feed.xml`
+
+The same document is also served at `/`. The filename is configurable in `/admin` (or `OUTPUT_FILENAME`). Version 1 used `/podcasts.xml`; set the filename back to `podcasts.xml` if you need that path.
 
 ## 📱 Adding to Podcast Apps
 
@@ -145,7 +147,7 @@ Your combined RSS feed will be available at:
 To listen to your combined feed on mobile devices, you can add it to Pocket Casts as a private feed:
 
 1. **Go to [Pocket Casts Submit](https://pocketcasts.com/submit/)**
-2. **Enter your RSS feed URL**: `https://your-worker-name.workers.dev/podcasts.xml`
+2. **Enter your RSS feed URL**: `https://your-worker-name.workers.dev/feed.xml` (feed type **Podcast**)
 3. **Select "Private"**: This ensures your personal combined feed won't appear in public searches
 4. **Click "Submit"**
 5. **Access via private link**: Pocket Casts will provide a private link to add the feed to all your devices
@@ -269,7 +271,7 @@ Then visit `http://localhost:8787` to test your worker.
 
 ## API Endpoints
 
-- `GET /` or `GET /podcasts.xml`: Returns the combined RSS feed
+- `GET /` or `GET /feed.xml`: Returns the combined RSS feed (`/feed.xml` is the default filename; a saved `outputFilename` replaces it)
 - `GET /healthcheck`: Returns health status and last update time
 - `POST /deploy-trigger`: Queues a feed rebuild (requires `ADMIN_SECRET` via cookie or `Authorization: Bearer`; hourly cron also enqueues without HTTP auth)
 - `GET /admin`: Web admin (requires `ADMIN_SECRET`; disabled until the secret is set)
@@ -284,7 +286,7 @@ Then visit `http://localhost:8787` to test your worker.
 You can configure the feed in either of two ways:
 
 1. **Environment variables** in `wrangler.toml` (`[vars]`) — used when no valid config exists in KV, and by `pnpm run generate` locally.
-2. **Workers KV** via the web admin — once saved, KV overrides `[vars]` for generation (each save queues a rebuild of `podcasts.xml`, plus hourly cron and `/deploy-trigger`).
+2. **Workers KV** via the web admin — once saved, KV overrides `[vars]` for generation (each save queues a rebuild of the configured filename, plus hourly cron and `/deploy-trigger`).
 
 Optional `PUBLIC_BASE_URL` in `[vars]` sets the RSS `feed_url`, `site_url`, and related links (defaults to a placeholder until you set it or save the admin form):
 
@@ -293,7 +295,18 @@ Optional `PUBLIC_BASE_URL` in `[vars]` sets the RSS `feed_url`, `site_url`, and 
 FEED_TITLE = "John's Tech Podcasts"
 FEED_IMAGE_URL = "https://your-bucket.r2.dev/cover.jpg"  # Uploaded via 'pnpm run upload-cover'
 # PUBLIC_BASE_URL = "https://your-worker.workers.dev"
+# FEED_TYPE = "podcast"          # podcast | generic
+# OUTPUT_FILENAME = "feed.xml"   # use podcasts.xml to keep a version 1 URL
 ```
+
+### Feed type
+
+Set **Feed type** in `/admin`, or `FEED_TYPE` in `[vars]` before the first KV save:
+
+- **Podcast** (default): iTunes channel tags, per-item season/episode numbers, and `itunes:image` artwork. Use this for podcast apps.
+- **Generic RSS**: titles, links, descriptions, enclosures, and `content:encoded`, without iTunes tags.
+
+Both modes append the source channel title to each item title. The type is not stored per source URL, and the worker does not try to detect whether a URL is a podcast. A blog item in a podcast feed is kept; it has no audio unless that item has an enclosure.
 
 Channel title, image, and per-episode artwork behavior are implemented in [`src/xml-builder.ts`](src/xml-builder.ts) using [`src/config.ts`](src/config.ts) (`AppConfig`, `coverMode`).
 
@@ -308,7 +321,7 @@ Apache `.htaccess` files are **not** applied to Cloudflare Workers. To restrict 
 
 1. **KV** — With GitHub Actions, the deploy workflow creates the namespace while `id` in `wrangler.toml` is still the placeholder. Locally, create a namespace and paste its id, or deploy once via Actions and copy the id from the log.
 2. **Admin password** — `wrangler secret put ADMIN_SECRET`, or set the `ADMIN_SECRET` GitHub Actions secret so CI syncs it on deploy.
-3. Open `https://<your-worker>.workers.dev/admin`, sign in, and save your settings. Saving queues a rebuild; `/podcasts.xml` updates when the job finishes (refresh `/admin` for ready / rebuilding / failed). Expand **How cutoffs & timeline merge work** under Source feeds for a short guide; for a full tutorial see [First-time setup: cutoffs and timeline merge](#first-time-cutoffs) below. Configuration is stored as JSON under the KV key `config:v1` (you edit feeds with add/remove rows in the UI—no raw JSON). The page includes a **rendered** preview (channel + episodes) and a **raw XML** tab, both updated as you edit.
+3. Open `https://<your-worker>.workers.dev/admin`, sign in, and save your settings. Saving queues a rebuild; `/feed.xml` (or your output filename) updates when the job finishes (refresh `/admin` for ready / rebuilding / failed). Expand **How cutoffs & timeline merge work** under Source feeds for a short guide; for a full tutorial see [First-time setup: cutoffs and timeline merge](#first-time-cutoffs) below. Configuration is stored as JSON under the KV key `config:v1` (you edit feeds with add/remove rows in the UI—no raw JSON). The page includes a **rendered** preview (channel + episodes) and a **raw XML** tab, both updated as you edit.
 
 `FEED_INDEX_PADDING` in `wrangler.toml` only applies when loading feeds from numbered `FEED_01_URL`–style vars (e.g. `pnpm run generate`); the admin UI uses a feed list and does not expose padding.
 
@@ -405,7 +418,7 @@ The project includes automatic deployment on feed updates:
 pnpm run deploy
 ```
 
-This command deploys the worker to Cloudflare. Save, the hourly cron, and authenticated `POST /deploy-trigger` (Bearer `ADMIN_SECRET`) enqueue a queue rebuild; `/podcasts.xml` updates when the job finishes. Offline: `pnpm run generate` still builds XML synchronously without Queues.
+This command deploys the worker to Cloudflare. Save, the hourly cron, and authenticated `POST /deploy-trigger` (Bearer `ADMIN_SECRET`) enqueue a queue rebuild; `/feed.xml` (or your output filename) updates when the job finishes. Offline: `pnpm run generate` still builds XML synchronously without Queues.
 
 ## Contributing
 

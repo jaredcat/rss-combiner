@@ -38,7 +38,7 @@ When you **create a repository from the template**, your repo has a **different 
 
    Under **Account Resources**, choose **Include** → **All accounts** (or pick the account that should host the Worker).
 
-   **Queues / Workers Paid:** Creating and using Queues typically requires **Workers Paid** (~$5/mo) to enable Queues on the account. After that, Queues have a free operations allotment. Free-tier-only accounts can still use `pnpm run generate` locally and serve a static `podcasts.xml`, but Save / cron / `/deploy-trigger` rebuilds need Queues.
+   **Queues / Workers Paid:** Creating and using Queues typically requires **Workers Paid** (~$5/mo) to enable Queues on the account. After that, Queues have a free operations allotment. Free-tier-only accounts can still use `pnpm run generate` locally and serve a static `feed.xml`, but Save / cron / `/deploy-trigger` rebuilds need Queues.
 
 6. **Continue to summary** → **Create Token** and copy the token once (you will not see it again).
 
@@ -85,7 +85,7 @@ The workflow will:
 
 2. Sign in with the password you stored in `ADMIN_SECRET`.
 3. Set **Public base URL** to your Worker URL (same origin, e.g. `https://&lt;name&gt;.workers.dev`).
-4. Add RSS URLs for your podcasts and **Save**. That queues a rebuild; refresh `/admin` for ready / rebuilding / failed. The combined feed is at **`/podcasts.xml`** when the job finishes (hourly cron also enqueues rebuilds).
+4. Add RSS 2.0 URLs and **Save**. Choose **Feed type** (Podcast or Generic RSS) and the output filename (`feed.xml` by default; set `podcasts.xml` if you are upgrading a version 1 subscription). That queues a rebuild; refresh `/admin` for ready / rebuilding / failed. The combined feed is at **`/feed.xml`** (or the filename you set) when the job finishes. `/` serves the same document. Hourly cron also enqueues rebuilds.
 
 ### Cover image and R2
 
@@ -102,12 +102,12 @@ The workflow will:
 
 ## Troubleshooting
 
-| Problem                                    | What to try                                                                                                                        |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Deploy fails with auth / account errors    | Confirm `CLOUDFLARE_API_TOKEN` permissions (including **Queues Edit**); add `CLOUDFLARE_ACCOUNT_ID` if you have multiple accounts. |
-| Deploy fails creating a Queue              | Enable Queues / upgrade to **Workers Paid**, then re-run deploy.                                                                   |
-| `/admin` says disabled                     | Add `ADMIN_SECRET` in GitHub secrets and re-run deploy, or run `wrangler secret put ADMIN_SECRET` after a local deploy.            |
-| Bucket or Worker name taken                | Change `name` / `bucket_name` in `wrangler.toml` to something unique.                                                              |
-| Save succeeds but `/podcasts.xml` is stale | Wait for the queue job; refresh `/admin` for rebuild status. Check Workers logs for queue consumer errors.                         |
+| Problem                                 | What to try                                                                                                                                                             |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deploy fails with auth / account errors | Confirm `CLOUDFLARE_API_TOKEN` permissions (including **Queues Edit**); add `CLOUDFLARE_ACCOUNT_ID` if you have multiple accounts.                                      |
+| Deploy fails creating a Queue           | Enable Queues / upgrade to **Workers Paid**, then re-run deploy.                                                                                                        |
+| `/admin` says disabled                  | Add `ADMIN_SECRET` in GitHub secrets and re-run deploy, or run `wrangler secret put ADMIN_SECRET` after a local deploy.                                                 |
+| Bucket or Worker name taken             | Change `name` / `bucket_name` in `wrangler.toml` to something unique.                                                                                                   |
+| Save succeeds but `/feed.xml` is stale  | Wait for the queue job; refresh `/admin` for rebuild status. Check Workers logs for queue consumer errors. The public filename follows **Output filename** in `/admin`. |
 
 For local development (Wrangler, `pnpm run dev`), create a KV namespace once and put its id in `wrangler.toml`, or copy the id from a successful GitHub Actions log after the first deploy. Queue bindings work with `wrangler.dev`; create the queue once (`pnpm run ensure-queue-ci` or `wrangler queues create …`) if you have not deployed yet.

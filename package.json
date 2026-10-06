@@ -1,6 +1,6 @@
 {
   "name": "rss-combiner",
-  "version": "1.2.1",
+  "version": "2.0.0",
   "author": "RSS Combiner Template",
   "repository": {
     "type": "git",
@@ -31,7 +31,7 @@
     "dev": "tsx scripts/wrangler-with-local.ts dev",
     "deploy": "tsx scripts/wrangler-with-local.ts deploy",
     "build": "tsx scripts/wrangler-with-local.ts build",
-    "generate": "tsx scripts/generate-xml.ts > podcasts.xml",
+    "generate": "tsx scripts/generate-xml.ts > feed.xml",
     "test-local": "tsx scripts/generate-xml.ts | head -50",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -58,12 +58,12 @@
     "husky": "^9.1.7",
     "lint-staged": "^17.6.0",
     "prettier": "^3.9.9",
-    "tsx": "^4.20.5",
+    "tsx": "^4.23.15",
     "typescript": "6.0.3",
     "vitest": "^4.1.11",
     "wrangler": "^4.147.0"
   },
-  "description": "A Cloudflare Worker-based RSS feed combiner that merges multiple podcast feeds into a single, unified feed",
+  "description": "A Cloudflare Worker-based RSS feed combiner that merges multiple RSS 2.0 feeds into one podcast or generic feed",
   "keywords": [
     "rss",
     "podcast",

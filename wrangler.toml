@@ -19,7 +19,7 @@ bucket_name = "your-podcasts-xml"  # TODO: Change this to your unique bucket nam
 binding = "CONFIG_KV"
 id = "00000000000000000000000000000000"  # Replaced automatically in CI, or paste a real id for local wrangler.dev
 
-# Sequential rebuild: one queue message ≈ one source feed, then finalize → podcasts.xml.
+# Sequential rebuild: one queue message ≈ one source feed, then finalize → the combined feed.
 # CI creates the queue and syncs the name from `name` above (rss-combiner-rebuild-<worker-name>).
 # Queues require Workers Paid to enable (free ops allotment after that). See docs/github-actions-setup.md.
 [[queues.producers]]
@@ -45,6 +45,8 @@ FEED_IMAGE_URL = "https://your-podcasts-xml.r2.dev/cover.jpg"  # TODO: Upload wi
 # Match your bucket name (same as bucket_name above). Enables “Upload to R2” in /admin and correct cover URLs:
 # R2_PUBLIC_BASE_URL = "https://your-podcasts-xml.r2.dev"
 # PUBLIC_BASE_URL = "https://your-worker.workers.dev"  # Optional: RSS feed_url / site_url (see README)
+# FEED_TYPE = "podcast"  # podcast (iTunes tags) or generic (plain RSS). Default: podcast
+# OUTPUT_FILENAME = "feed.xml"  # Public path. Version 1 subscribers: set "podcasts.xml"
 
 # Default cutoff (day / month / year): episodes must be published after this date unless a feed row overrides.
 # Same vars as main; feeds with an older per-feed cutoff year get year-shifted (see admin UI -> Source feeds).

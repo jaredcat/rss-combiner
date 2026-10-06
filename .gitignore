@@ -184,6 +184,7 @@ worker-configuration.d.ts
 
 # Generated content
 podcasts.xml
+feed.xml
 
 # Cover images (upload to R2 instead)
 cover.jpg

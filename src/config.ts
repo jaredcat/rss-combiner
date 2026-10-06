@@ -5,6 +5,18 @@ export const CONFIG_KV_KEY = 'config:v1';
 
 export type CoverMode = 'source' | 'main' | 'per_feed_main';
 
+/**
+How the combined feed is written. One value for every source.
+*/
+export type FeedType = 'podcast' | 'generic';
+
+/**
+Public filename when `outputFilename` is unset. Version 1 served `podcasts.xml`.
+*/
+export const DEFAULT_OUTPUT_FILENAME = 'feed.xml';
+
+const OUTPUT_FILENAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}\.xml$/;
+
 export interface FeedEntry {
   url: string;
   cutoffYear?: string;
@@ -25,6 +37,15 @@ export interface StoredConfig {
   feeds?: FeedEntry[];
   coverMode?: CoverMode;
   publicBaseUrl?: string;
+  /**
+  `podcast` keeps iTunes season/episode/artwork tags. `generic` is plain RSS 2.0.
+  Missing means podcast so existing KV documents keep their item shape.
+  */
+  feedType?: FeedType;
+  /**
+  Public path segment, e.g. `feed.xml`. Missing means `feed.xml` (version 2 default).
+  */
+  outputFilename?: string;
 }
 
 export interface AppConfig {
@@ -35,6 +56,8 @@ export interface AppConfig {
   feeds: FeedEntry[];
   coverMode: CoverMode;
   publicBaseUrl: string;
+  feedType: FeedType;
+  outputFilename: string;
 }
 
 function isNonEmptyString(v: unknown): v is string {
@@ -57,6 +80,58 @@ export function parseCoverMode(value: unknown): CoverMode {
     return 'main';
   }
   return value === 'per_feed_main' ? 'per_feed_main' : 'source';
+}
+
+/**
+Unknown or missing values stay on podcast output.
+*/
+export function parseFeedType(value: unknown): FeedType {
+  return typeof value === 'string' && value.trim().toLowerCase() === 'generic'
+    ? 'generic'
+    : 'podcast';
+}
+
+export function isValidOutputFilename(value: string): boolean {
+  return OUTPUT_FILENAME_PATTERN.test(value);
+}
+
+/**
+Missing or invalid names become `feed.xml`. Used when reading KV or wrangler vars.
+*/
+export function parseOutputFilename(value: unknown): string {
+  if (typeof value !== 'string') {
+    return DEFAULT_OUTPUT_FILENAME;
+  }
+  const name = value.trim();
+  return isValidOutputFilename(name) ? name : DEFAULT_OUTPUT_FILENAME;
+}
+
+/**
+Reject a non-empty admin/form value that is not a single `*.xml` file name.
+*/
+export function assertOutputFilename(value: string): string {
+  const name = value.trim();
+  if (!isValidOutputFilename(name)) {
+    throw new Error(
+      'Output filename must be a single name ending in .xml, using letters, numbers, dots, hyphens, or underscores.',
+    );
+  }
+  return name;
+}
+
+export function feedPublicPath(outputFilename: string): string {
+  return `/${parseOutputFilename(outputFilename)}`;
+}
+
+/**
+`/` always serves the combined feed. The named path must match the configured file.
+*/
+export function isCombinedFeedRequest(
+  pathname: string,
+  outputFilename: string,
+): boolean {
+  const path = pathname.replace(/\/$/, '') || '/';
+  return path === '/' || path === feedPublicPath(outputFilename);
 }
 
 export function isValidFeedEntry(x: unknown): x is FeedEntry {
@@ -136,9 +211,14 @@ export function envToAppConfig(environment: Environment): AppConfig {
   const base =
     (environment.PUBLIC_BASE_URL as string | undefined)?.replace(/\/$/, '') ||
     '';
+  const feedType = parseFeedType(environment.FEED_TYPE);
 
   return {
-    feedTitle: (environment.FEED_TITLE as string) || 'My Combined Podcast Feed',
+    feedTitle:
+      (environment.FEED_TITLE as string) ||
+      (feedType === 'generic'
+        ? 'My Combined Feed'
+        : 'My Combined Podcast Feed'),
     feedImageUrl: environment.FEED_IMAGE_URL,
     feedIndexPadding: pad,
     defaultCutoff: {
@@ -150,6 +230,8 @@ export function envToAppConfig(environment: Environment): AppConfig {
     coverMode: 'source',
     publicBaseUrl:
       base || 'https://your-worker-name.your-subdomain.workers.dev',
+    feedType,
+    outputFilename: parseOutputFilename(environment.OUTPUT_FILENAME),
   };
 }
 
@@ -185,6 +267,10 @@ function mergeStored(
     coverMode: parseCoverMode(stored.coverMode),
     publicBaseUrl:
       stored.publicBaseUrl?.replace(/\/$/, '') || fallback.publicBaseUrl,
+    feedType: parseFeedType(stored.feedType ?? environment.FEED_TYPE),
+    outputFilename: parseOutputFilename(
+      stored.outputFilename ?? environment.OUTPUT_FILENAME,
+    ),
   };
 }
 
@@ -234,5 +320,7 @@ export function appConfigToStored(config: AppConfig): StoredConfig {
     })),
     coverMode: config.coverMode,
     publicBaseUrl: config.publicBaseUrl,
+    feedType: config.feedType,
+    outputFilename: config.outputFilename,
   };
 }

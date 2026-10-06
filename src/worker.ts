@@ -20,8 +20,12 @@ import {
 } from './admin';
 import {
   CONFIG_KV_KEY,
+  DEFAULT_OUTPUT_FILENAME,
   appConfigToStored,
+  assertOutputFilename,
+  isCombinedFeedRequest,
   parseCoverMode,
+  parseFeedType,
   parseFeedsFromFormData,
   resolveConfig,
   type AppConfig,
@@ -58,6 +62,14 @@ export interface Env {
   DEFAULT_CUTOFF_DATE_MONTH: string;
   DEFAULT_CUTOFF_DATE_YEAR: string;
   FEED_INDEX_PADDING: string;
+  /**
+  `podcast` (default) or `generic`. Used when KV has no feedType.
+  */
+  FEED_TYPE?: string;
+  /**
+  Public feed filename, e.g. feed.xml. Used when KV has no outputFilename.
+  */
+  OUTPUT_FILENAME?: string;
   [key: string]:
     string | R2Bucket | KVNamespace | Queue<RebuildMessage> | undefined;
 }
@@ -87,12 +99,13 @@ function resolveCoverPublicUrl(environment: Env): string | undefined {
 function adminPageContext(
   request: Request,
   environment: Env,
+  outputFilename: string,
 ): AdminPageContext {
   const url = new URL(request.url);
   const deployedOrigin = `${url.protocol}//${url.host}`;
   return {
     deployedOrigin,
-    deployedFeedUrl: `${deployedOrigin}/podcasts.xml`,
+    deployedFeedUrl: `${deployedOrigin}/${outputFilename}`,
     coverUploadEnabled: resolveCoverPublicUrl(environment) !== undefined,
   };
 }
@@ -110,12 +123,19 @@ function appConfigFromFormData(form: FormData, environment: Env): AppConfig {
   const feedImageUrl = formText(form, 'feedImageUrl');
   const publicBaseUrl = formText(form, 'publicBaseUrl');
   const coverMode = parseCoverMode(formText(form, 'coverMode'));
+  const feedType = parseFeedType(formText(form, 'feedType'));
+  const outputFilenameRaw = formText(form, 'outputFilename');
+  const outputFilename = outputFilenameRaw
+    ? assertOutputFilename(outputFilenameRaw)
+    : DEFAULT_OUTPUT_FILENAME;
   const pad = Number(environment.FEED_INDEX_PADDING || '2');
 
   const feeds = parseFeedsFromFormData(form);
 
   return {
-    feedTitle: feedTitle || 'My Combined Podcast Feed',
+    feedTitle:
+      feedTitle ||
+      (feedType === 'generic' ? 'Combined Feed' : 'Combined Podcast Feed'),
     feedImageUrl: feedImageUrl || undefined,
     feedIndexPadding: Number.isFinite(pad) && pad >= 1 ? pad : 2,
     defaultCutoff: {
@@ -135,6 +155,8 @@ function appConfigFromFormData(form: FormData, environment: Env): AppConfig {
     feeds,
     coverMode,
     publicBaseUrl: publicBaseUrl.replace(/\/$/, ''),
+    feedType,
+    outputFilename,
   };
 }
 
@@ -189,8 +211,11 @@ async function renderAdminPage(request: Request, environment: Env, url: URL) {
   const config = await resolveConfig(environment, environment.CONFIG_KV);
   const isSaved = url.searchParams.get('saved') === '1';
   const rebuild = await getRebuildStatus(environment);
-  const flash = rebuildStatusFlash(rebuild, { saved: isSaved });
-  const context = adminPageContext(request, environment);
+  const flash = rebuildStatusFlash(rebuild, {
+    saved: isSaved,
+    outputFilename: config.outputFilename,
+  });
+  const context = adminPageContext(request, environment, config.outputFilename);
   return {
     hint: ADMIN_PAGE_HINT,
     flash,
@@ -301,7 +326,12 @@ const admin = createAdmin<Env>({
     // Full rebuild runs as a chain of queue jobs (one feed per invocation).
     await startRebuild(env);
     const rebuild = await getRebuildStatus(env);
-    return { flash: rebuildStatusFlash(rebuild, { saved: true }) };
+    return {
+      flash: rebuildStatusFlash(rebuild, {
+        saved: true,
+        outputFilename: config.outputFilename,
+      }),
+    };
   },
   routes: {
     'POST /preview': handleAdminPreview,
@@ -322,8 +352,9 @@ async function handleDeployTrigger(
   }
   try {
     const status = await startRebuild(environment);
+    const config = await resolveConfig(environment, environment.CONFIG_KV);
     return new Response(
-      `Rebuild queued (job ${status.jobId}). /podcasts.xml updates when the job finishes.`,
+      `Rebuild queued (job ${status.jobId}). /${config.outputFilename} updates when the job finishes.`,
       { status: 200 },
     );
   } catch (error) {
@@ -334,7 +365,7 @@ async function handleDeployTrigger(
   }
 }
 
-async function handlePodcastsXml(
+async function handleFeedXml(
   _request: Request,
   environment: Env,
 ): Promise<Response> {
@@ -351,7 +382,7 @@ async function handlePodcastsXml(
       },
     });
   } catch (error) {
-    console.error('Failed to serve podcasts.xml:', error);
+    console.error('Failed to serve combined feed:', error);
     return new Response('Internal Server Error', { status: 500 });
   }
 }
@@ -379,8 +410,6 @@ async function handleHealthcheck(
 
 const PATH_ROUTES: Record<string, RouteHandler> = {
   '/deploy-trigger': handleDeployTrigger,
-  '/': handlePodcastsXml,
-  '/podcasts.xml': handlePodcastsXml,
   '/healthcheck': handleHealthcheck,
 };
 
@@ -410,13 +439,18 @@ export default {
 
     const url = new URL(request.url);
     const path = normalizePath(url.pathname);
-    if (!Object.hasOwn(PATH_ROUTES, path)) {
-      return new Response('Not found', { status: 404 });
-    }
-    return PATH_ROUTES[path](request, environment, {
+    const requestContext = {
       url,
       secureCookie: url.protocol === 'https:',
       executionCtx: context,
-    });
+    };
+    if (Object.hasOwn(PATH_ROUTES, path)) {
+      return PATH_ROUTES[path](request, environment, requestContext);
+    }
+
+    const config = await resolveConfig(environment, environment.CONFIG_KV);
+    return isCombinedFeedRequest(path, config.outputFilename)
+      ? handleFeedXml(request, environment)
+      : new Response('Not found', { status: 404 });
   },
 };
