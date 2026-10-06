@@ -1,4 +1,4 @@
-import { parse } from '@iarna/toml';
+import { parse } from 'smol-toml';
 import fs from 'node:fs/promises';
 
 const COVER_FILES = ['cover.jpg', 'cover.jpeg', 'cover.png'] as const;

@@ -1,4 +1,4 @@
-import { parse } from '@iarna/toml';
+import { parse } from 'smol-toml';
 import fs from 'node:fs/promises';
 import { envToAppConfig as environmentToAppConfig } from '../src/config';
 import type { Env as Environment } from '../src/worker';

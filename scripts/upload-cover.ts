@@ -1,4 +1,4 @@
-import { parse, stringify } from '@iarna/toml';
+import { parse, stringify } from 'smol-toml';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 

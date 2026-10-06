@@ -4,6 +4,55 @@ import type { AppConfig, CoverMode, FeedEntry } from './config';
 import { defaultFetchFeedText, getPreviewFeedText } from './feed-fetch';
 
 /**
+Keep `podcast:transcript` / `podcast:chapters` entries that have both url and type.
+*/
+function parseRemoteResources(value: unknown): RemoteResource[] {
+  const entries = Array.isArray(value) ? value : [value];
+  const resources: RemoteResource[] = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    const record = entry as RssRemoteResource;
+    const url = record['@_url']?.trim() ?? '';
+    const type = record['@_type']?.trim() ?? '';
+    if (!url || !type) {
+      continue;
+    }
+    const language = record['@_language']?.trim();
+    const relationship = record['@_rel']?.trim();
+    resources.push({
+      url,
+      type,
+      ...(language && { language }),
+      ...(relationship && { rel: relationship }),
+    });
+  }
+  return resources;
+}
+
+function optionalResources(value: unknown): RemoteResource[] | undefined {
+  const resources = parseRemoteResources(value);
+  return resources.length > 0 ? resources : undefined;
+}
+
+function remoteResourceElements(
+  tag: 'podcast:transcript' | 'podcast:chapters',
+  resources: RemoteResource[] | undefined,
+): Record<string, { _attr: Record<string, string> }>[] {
+  return (resources ?? []).map((resource) => ({
+    [tag]: {
+      _attr: {
+        url: resource.url,
+        type: resource.type,
+        ...(resource.language && { language: resource.language }),
+        ...(resource.rel && { rel: resource.rel }),
+      },
+    },
+  }));
+}
+
+/**
 RSS `pubDate` may be a string or `{ '#text': string }` from fast-xml-parser.
 */
 function normalizeRssText(value: unknown): string {
@@ -22,6 +71,23 @@ interface RssEnclosure {
   '@_length'?: string;
 }
 
+/**
+`podcast:transcript` and `podcast:chapters` are attribute-only elements.
+*/
+interface RssRemoteResource {
+  '@_url'?: string;
+  '@_type'?: string;
+  '@_language'?: string;
+  '@_rel'?: string;
+}
+
+export interface RemoteResource {
+  url: string;
+  type: string;
+  language?: string;
+  rel?: string;
+}
+
 interface RssItem {
   title?: unknown;
   link?: unknown;
@@ -34,6 +100,8 @@ interface RssItem {
   'itunes:image'?: { '@_href'?: string };
   'itunes:explicit'?: unknown;
   'itunes:episodeType'?: unknown;
+  'podcast:transcript'?: RssRemoteResource | RssRemoteResource[];
+  'podcast:chapters'?: RssRemoteResource | RssRemoteResource[];
 }
 
 interface RssChannel {
@@ -58,8 +126,9 @@ export interface CustomItem {
     isPermaLink?: boolean;
   };
   description?: string;
-  summary?: string;
   contentEncoded?: string;
+  transcripts?: RemoteResource[];
+  chapters?: RemoteResource[];
   pubDate: string;
   enclosure?: {
     url: string;
@@ -279,6 +348,8 @@ async function parseFeed(
           'itunes:image': item['itunes:image']?.['@_href'] ?? '',
           'itunes:explicit': normalizeRssText(item['itunes:explicit']),
           'itunes:episodeType': normalizeRssText(item['itunes:episodeType']),
+          transcripts: optionalResources(item['podcast:transcript']),
+          chapters: optionalResources(item['podcast:chapters']),
           sortDate,
         },
       ];
@@ -377,9 +448,10 @@ function createRssChannel(config: AppConfig): RSS {
       },
     }),
     custom_namespaces: {
-      // Podcast namespace URIs are historically http:// (not fetch URLs).
       ...(isPodcast && {
-        itunes: 'https://www.itunes.com/dtds/podcast-1.0.dtd',
+        // eslint-disable-next-line sonarjs/no-clear-text-protocols, unicorn/prefer-https -- Apple podcast namespace URI, not a request
+        itunes: 'http://www.itunes.com/dtds/podcast-1.0.dtd',
+        podcast: 'https://podcastindex.org/namespace/1.0',
       }),
       content: 'https://purl.org/rss/1.0/modules/content/',
     },
@@ -420,10 +492,7 @@ function appendEpisodesToRss(
     feedImage,
   } of itemsForOutput) {
     const itemTitle = `${item.title || ''} - ${sourceFeedTitle}`;
-    const body =
-      options?.lightweight === true
-        ? ''
-        : item.description || item.summary || '';
+    const body = options?.lightweight === true ? '' : item.description || '';
     const encoded = contentEncodedElement(
       options?.lightweight === true ? undefined : item.contentEncoded,
     );
@@ -458,12 +527,13 @@ function appendEpisodesToRss(
           ? [
               { 'itunes:title': itemTitle },
               { 'itunes:duration': item['itunes:duration'] ?? '' },
-              { 'itunes:summary': body },
               { 'itunes:episodeType': item['itunes:episodeType'] ?? 'full' },
               { 'itunes:explicit': item['itunes:explicit'] ?? 'false' },
               { 'itunes:season': item['itunes:season'] ?? season },
               { 'itunes:episode': item['itunes:episode'] ?? episode },
               imgElement,
+              ...remoteResourceElements('podcast:transcript', item.transcripts),
+              ...remoteResourceElements('podcast:chapters', item.chapters),
             ]
           : []),
         encoded,

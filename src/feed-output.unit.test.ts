@@ -9,7 +9,11 @@ import {
   resolveConfig,
   type AppConfig,
 } from './config.ts';
-import { buildPodcastsXml, type MergedEpisode } from './xml-builder.ts';
+import {
+  buildPodcastsXml,
+  parseAndFilterFeed,
+  type MergedEpisode,
+} from './xml-builder.ts';
 import type { Env } from './worker.ts';
 
 function environment(overrides: Record<string, string> = {}): Env {
@@ -118,6 +122,62 @@ describe('buildPodcastsXml feed types', () => {
     expect(xml).toContain('itunes:episode');
     expect(xml).toContain('https://example.com/a.mp3');
     expect(xml).toContain('<p>Body</p>');
+    expect(xml).not.toContain('itunes:summary');
+  });
+
+  test('podcast output copies transcripts and chapters from the source item', async () => {
+    const source = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Show</title>
+    <item>
+      <title>Hello</title>
+      <pubDate>Sat, 01 Jun 2024 00:00:00 GMT</pubDate>
+      <podcast:transcript url="https://cdn.example/ep.vtt" type="text/vtt" language="en" rel="captions"/>
+      <podcast:transcript url="https://cdn.example/ep.json" type="application/json" language="en"/>
+      <podcast:chapters url="https://cdn.example/chapters.json" type="application/json+chapters"/>
+      <podcast:transcript type="text/vtt"/>
+    </item>
+  </channel>
+</rss>`;
+    const { episodes } = await parseAndFilterFeed(
+      { url: 'https://example.com/show.xml' },
+      appConfig(),
+      async () => source,
+    );
+    expect(episodes[0]?.item.transcripts).toEqual([
+      {
+        url: 'https://cdn.example/ep.vtt',
+        type: 'text/vtt',
+        language: 'en',
+        rel: 'captions',
+      },
+      {
+        url: 'https://cdn.example/ep.json',
+        type: 'application/json',
+        language: 'en',
+      },
+    ]);
+    expect(episodes[0]?.item.chapters).toEqual([
+      {
+        url: 'https://cdn.example/chapters.json',
+        type: 'application/json+chapters',
+      },
+    ]);
+
+    const xml = buildPodcastsXml(appConfig(), episodes);
+    expect(xml).toContain('https://podcastindex.org/namespace/1.0');
+    expect(xml).toContain('https://cdn.example/ep.vtt');
+    expect(xml).toContain('type="text/vtt"');
+    expect(xml).toContain('rel="captions"');
+    expect(xml).toContain('https://cdn.example/chapters.json');
+    expect(xml).not.toContain('itunes:summary');
+
+    const generic = buildPodcastsXml(
+      appConfig({ feedType: 'generic' }),
+      episodes,
+    );
+    expect(generic).not.toContain('podcast:');
   });
 
   test('generic output skips iTunes episode tags', () => {

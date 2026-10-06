@@ -137,6 +137,10 @@ const FEED_ROW_TEMPLATE = `<fieldset class="feed-row" data-feed-row>
     <button type="button" class="feed-remove">Remove feed</button>
   </fieldset>`;
 
+// Apple's podcast namespace URI is an identifier, not a request.
+// eslint-disable-next-line sonarjs/no-clear-text-protocols, unicorn/prefer-https
+const ITUNES_NAMESPACE = 'http://www.itunes.com/dtds/podcast-1.0.dtd';
+
 /**
 Inner admin UI for `createAdmin` (`wrapBody: false`).
 Chrome (title, flash, logout) comes from workers-mini-admin.
@@ -262,7 +266,7 @@ export function adminSettingsBody(
   <template id="feed-row-template">${FEED_ROW_TEMPLATE}</template>
   <script>
   (function () {
-    var ITUNES_NS = 'https://www.itunes.com/dtds/podcast-1.0.dtd';
+    var ITUNES_NS = '${ITUNES_NAMESPACE}';
     var form = document.getElementById('admin-settings-form');
     var statusEl = document.getElementById('preview-status');
     var xmlEl = document.getElementById('preview-xml');
@@ -431,10 +435,6 @@ export function adminSettingsBody(
         sub.textContent = pub + (audio ? ' · audio' : '');
         body.appendChild(sub);
         var desc = firstChildText(item, 'description') || '';
-        if (!desc) {
-          var summ = item.getElementsByTagNameNS(ITUNES_NS, 'summary')[0];
-          if (summ) desc = summ.textContent.trim();
-        }
         if (desc) {
           var d = document.createElement('p');
           d.className = 'ep-desc';
