@@ -1,5 +1,5 @@
-#!/usr/bin/env bun
 /**
+
 Ensures a Cloudflare Queue exists for REBUILD_QUEUE and syncs the queue name
 in wrangler.toml from the Worker `name` (rss-combiner-rebuild-<worker-name>).
 Intended for GitHub Actions CI (and optional local use).
@@ -11,6 +11,11 @@ Note: Enabling Queues typically requires a Workers Paid plan.
 */
 
 import fs from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
+
+function isMainModule(): boolean {
+  return import.meta.url === pathToFileURL(process.argv[1]).href;
+}
 
 function queueNameForWorker(workerName: string): string {
   const safe = workerName.replaceAll(/[^a-zA-Z0-9_-]/g, '-').slice(0, 40);
@@ -313,7 +318,7 @@ async function main() {
 }
 
 // Guarded so the pure helpers above can be imported by tests without running CI work.
-if (import.meta.main) {
+if (isMainModule()) {
   try {
     await main();
   } catch (error) {

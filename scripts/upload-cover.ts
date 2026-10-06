@@ -1,5 +1,3 @@
-#!/usr/bin/env bun
-
 import { parse, stringify } from '@iarna/toml';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs/promises';
@@ -73,7 +71,7 @@ async function uploadCover() {
     console.log(`🌐 Image URL: ${imageUrl}`);
     console.log('📝 Updated wrangler.toml with new image URL');
     console.log('\n🚀 Deploy your worker to use the new image:');
-    console.log('   bun run deploy');
+    console.log('   pnpm run deploy');
   } catch (error) {
     console.error('❌ Failed to upload cover image:', error);
     console.log('\n💡 Make sure:');

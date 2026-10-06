@@ -27,17 +27,17 @@ From a clone with your branch checked out:
 export CLOUDFLARE_API_TOKEN="..."   # Workers + KV + R2 + Queues
 export CLOUDFLARE_ACCOUNT_ID="..."  # if your token sees multiple accounts
 
-bun install
-bun run ensure-kv-ci
-bun run ensure-queue-ci
+pnpm install
+pnpm run ensure-kv-ci
+pnpm run ensure-queue-ci
 ```
 
 That patches `wrangler.toml` **on disk** if the KV id is still the placeholder and syncs the rebuild queue name (same as CI). Queues usually need **Workers Paid**. Then:
 
 ```bash
-bunx wrangler deploy
+pnpm exec wrangler deploy
 # Optional: pipe your admin password into the Worker secret
-printf '%s' 'your-password' | bunx wrangler secret put ADMIN_SECRET
+printf '%s' 'your-password' | pnpm exec wrangler secret put ADMIN_SECRET
 ```
 
 **Git note:** If you run `ensure-kv-ci` locally, you either commit the new KV `id` line or restore `wrangler.toml` from git. For the **template**, keeping the placeholder in git is fine because CI patches each run. For a **migration**, you usually **commit the real KV id** once (see below).

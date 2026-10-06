@@ -41,7 +41,7 @@ If you prefer to develop locally or need advanced customization:
 
 ### Prerequisites
 
-- [Bun](https://bun.sh) runtime
+- [Node.js](https://nodejs.org) 24+ (dev: 26) and [pnpm](https://pnpm.io)
 - [A free Cloudflare account](https://cloudflare.com) with Workers and R2 enabled
 - [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/)
 
@@ -52,7 +52,7 @@ Click "Use this template" on GitHub to create your own repository.
 ### 2. Install Dependencies
 
 ```bash
-bun install
+pnpm install
 ```
 
 ### 3. Add Your Cover Image (Optional)
@@ -116,13 +116,13 @@ FEED_02_URL = "https://example.com/feed2.xml"
 3. **Upload your cover image** (optional):
 
    ```bash
-   bun run upload-cover
+   pnpm run upload-cover
    ```
 
 4. **Deploy the worker**:
 
    ```bash
-   bun run deploy
+   pnpm run deploy
    ```
 
 5. **Admin password** — Set `wrangler secret put ADMIN_SECRET` (or add `ADMIN_SECRET` as a GitHub Actions secret so CI applies it). Then open `/admin`.
@@ -169,7 +169,7 @@ The easiest way to add a cover image is to use the built-in upload tool:
 2. **Upload to R2**:
 
    ```bash
-   bun run upload-cover
+   pnpm run upload-cover
    ```
 
 This command will:
@@ -219,27 +219,28 @@ Where `XX` is a zero-padded number (01, 02, 03, etc.).
 
 ### Global Settings
 
-- `DEFAULT_CUTOFF_DATE_DAY`, `DEFAULT_CUTOFF_DATE_MONTH`, `DEFAULT_CUTOFF_DATE_YEAR`: Default cutoff calendar date for feeds that do not set per-feed cutoffs (same semantics as main: `bun run generate` and first deploy before KV).
+- `DEFAULT_CUTOFF_DATE_DAY`, `DEFAULT_CUTOFF_DATE_MONTH`, `DEFAULT_CUTOFF_DATE_YEAR`: Default cutoff calendar date for feeds that do not set per-feed cutoffs (same semantics as main: `pnpm run generate` and first deploy before KV).
 - `FEED_INDEX_PADDING`: Number of digits for feed indexing (default: 2)
 
 ## Available Commands
 
 ```bash
 # Setup and validation
-bun run setup              # Check configuration and show setup status
-bun run lint               # ESLint (typescript-eslint + SonarJS)
+pnpm run setup              # Check configuration and show setup status
+pnpm run lint               # ESLint (typescript-eslint + SonarJS)
+pnpm test                   # Vitest (Node unit + Workers Miniflare)
 
 # Cover image management
-bun run upload-cover       # Upload cover.jpg/cover.png to R2 bucket
+pnpm run upload-cover       # Upload cover.jpg/cover.png to R2 bucket
 
 # Development
-bun run dev               # Start local development server
-bun run generate          # Generate feed locally for testing
-bun run test-local        # Generate and preview first 50 lines
+pnpm run dev               # Start local development server
+pnpm run generate          # Generate feed locally for testing
+pnpm run test-local        # Generate and preview first 50 lines
 
 # Deployment
-bun run build             # Build the worker
-bun run deploy            # Deploy to Cloudflare Workers
+pnpm run build             # Build the worker
+pnpm run deploy            # Deploy to Cloudflare Workers
 ```
 
 ## Local Development
@@ -248,14 +249,14 @@ bun run deploy            # Deploy to Cloudflare Workers
 
 ```bash
 # Generate and preview the combined XML feed
-bun run generate
+pnpm run generate
 ```
 
 ### Test the Worker Locally
 
 ```bash
 # Start local development server
-bun run dev
+pnpm run dev
 ```
 
 Then visit `http://localhost:8787` to test your worker.
@@ -276,7 +277,7 @@ Then visit `http://localhost:8787` to test your worker.
 
 You can configure the feed in either of two ways:
 
-1. **Environment variables** in `wrangler.toml` (`[vars]`) — used when no valid config exists in KV, and by `bun run generate` locally.
+1. **Environment variables** in `wrangler.toml` (`[vars]`) — used when no valid config exists in KV, and by `pnpm run generate` locally.
 2. **Workers KV** via the web admin — once saved, KV overrides `[vars]` for generation (each save queues a rebuild of `podcasts.xml`, plus hourly cron and `/deploy-trigger`).
 
 Optional `PUBLIC_BASE_URL` in `[vars]` sets the RSS `feed_url`, `site_url`, and related links (defaults to a placeholder until you set it or save the admin form):
@@ -284,7 +285,7 @@ Optional `PUBLIC_BASE_URL` in `[vars]` sets the RSS `feed_url`, `site_url`, and 
 ```toml
 [vars]
 FEED_TITLE = "John's Tech Podcasts"
-FEED_IMAGE_URL = "https://your-bucket.r2.dev/cover.jpg"  # Uploaded via 'bun run upload-cover'
+FEED_IMAGE_URL = "https://your-bucket.r2.dev/cover.jpg"  # Uploaded via 'pnpm run upload-cover'
 # PUBLIC_BASE_URL = "https://your-worker.workers.dev"
 ```
 
@@ -303,7 +304,7 @@ Apache `.htaccess` files are **not** applied to Cloudflare Workers. To restrict 
 2. **Admin password** — `wrangler secret put ADMIN_SECRET`, or set the `ADMIN_SECRET` GitHub Actions secret so CI syncs it on deploy.
 3. Open `https://<your-worker>.workers.dev/admin`, sign in, and save your settings. Saving queues a rebuild; `/podcasts.xml` updates when the job finishes (refresh `/admin` for ready / rebuilding / failed). Expand **How cutoffs & timeline merge work** under Source feeds for a short guide; for a full tutorial see [First-time setup: cutoffs and timeline merge](#first-time-cutoffs) below. Configuration is stored as JSON under the KV key `config:v1` (you edit feeds with add/remove rows in the UI—no raw JSON). The page includes a **rendered** preview (channel + episodes) and a **raw XML** tab, both updated as you edit.
 
-`FEED_INDEX_PADDING` in `wrangler.toml` only applies when loading feeds from numbered `FEED_01_URL`–style vars (e.g. `bun run generate`); the admin UI uses a feed list and does not expose padding.
+`FEED_INDEX_PADDING` in `wrangler.toml` only applies when loading feeds from numbered `FEED_01_URL`–style vars (e.g. `pnpm run generate`); the admin UI uses a feed list and does not expose padding.
 
 ### Episode artwork
 
@@ -388,24 +389,24 @@ curl https://your-worker.workers.dev/healthcheck
 
 - **Worker deployment fails**: Ensure your bucket name is unique and exists
 - **Feed not updating**: Check the cron trigger is enabled and worker logs in Cloudflare dashboard
-- **Invalid feed**: Test locally with `bun run generate` to debug feed issues
+- **Invalid feed**: Test locally with `pnpm run generate` to debug feed issues
 
 ### Local Deployment
 
 The project includes automatic deployment on feed updates:
 
 ```bash
-bun run deploy
+pnpm run deploy
 ```
 
-This command deploys the worker to Cloudflare. Save, the hourly cron, and authenticated `POST /deploy-trigger` (Bearer `ADMIN_SECRET`) enqueue a queue rebuild; `/podcasts.xml` updates when the job finishes. Offline: `bun run generate` still builds XML synchronously without Queues.
+This command deploys the worker to Cloudflare. Save, the hourly cron, and authenticated `POST /deploy-trigger` (Bearer `ADMIN_SECRET`) enqueue a queue rebuild; `/podcasts.xml` updates when the job finishes. Offline: `pnpm run generate` still builds XML synchronously without Queues.
 
 ## Contributing
 
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Test locally with `bun run dev`
+4. Test locally with `pnpm run dev`
 5. Submit a pull request
 
 ## License

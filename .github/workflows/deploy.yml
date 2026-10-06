@@ -22,32 +22,30 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Setup pnpm
+        uses: pnpm/setup@v3
         with:
-          bun-version: latest
-
-      - name: Install dependencies
-        run: bun install
+          cache: true
+          require-lockfile: true
 
       - name: Ensure KV namespace for /admin (patch wrangler.toml in CI)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: bun run ensure-kv-ci
+        run: pnpm run ensure-kv-ci
 
       - name: Ensure rebuild Queue (patch wrangler.toml in CI)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: bun run ensure-queue-ci
+        run: pnpm run ensure-queue-ci
 
       - name: List existing R2 buckets
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
-          packageManager: bun
+          packageManager: pnpm
           command: r2 bucket list
         id: list_buckets
 
@@ -69,7 +67,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
-          packageManager: bun
+          packageManager: pnpm
           command: r2 bucket create ${{ env.BUCKET_NAME }}
         continue-on-error: true
 
@@ -77,7 +75,7 @@ jobs:
         run: |
           if [ -f "cover.jpg" ] || [ -f "cover.jpeg" ] || [ -f "cover.png" ]; then
             echo "Found cover image, uploading to R2..."
-            bun run upload-cover || echo "Cover upload failed, continuing deployment"
+            pnpm run upload-cover || echo "Cover upload failed, continuing deployment"
           else
             echo "No cover image found, skipping upload"
           fi
@@ -89,7 +87,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
-          packageManager: bun
+          packageManager: pnpm
           command: deploy
         id: deploy
 
@@ -102,7 +100,7 @@ jobs:
           if [ -z "$ADMIN_SECRET" ]; then
             echo "::notice title=Admin password::Add repository secret ADMIN_SECRET (password for https://…/admin). Without it, /admin stays disabled until you set the secret."
           else
-            printf '%s' "$ADMIN_SECRET" | bunx wrangler secret put ADMIN_SECRET
+            printf '%s' "$ADMIN_SECRET" | pnpm exec wrangler secret put ADMIN_SECRET
           fi
 
       - name: Deployment summary

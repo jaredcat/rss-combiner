@@ -1,5 +1,3 @@
-#!/usr/bin/env bun
-
 import { parse } from '@iarna/toml';
 import fs from 'node:fs/promises';
 
@@ -58,7 +56,7 @@ function logCoverHints(
     return;
   }
   console.log(`🎨 Found local cover image: ${localCoverFile}`);
-  console.log('   You can upload it to R2 with: bun run upload-cover\n');
+  console.log('   You can upload it to R2 with: pnpm run upload-cover\n');
 }
 
 function logNextSteps(needsRename: boolean, hasLocalCover: boolean): void {
@@ -67,17 +65,17 @@ function logNextSteps(needsRename: boolean, hasLocalCover: boolean): void {
   console.log('1. Update worker name and bucket name in wrangler.toml');
   console.log('2. Customize FEED_TITLE and optionally set FEED_IMAGE_URL');
   if (hasLocalCover) {
-    console.log('3. Upload your cover image: bun run upload-cover');
+    console.log('3. Upload your cover image: pnpm run upload-cover');
   } else {
     console.log(
-      '3. Optionally add a cover.jpg/cover.png file and run: bun run upload-cover',
+      '3. Optionally add a cover.jpg/cover.png file and run: pnpm run upload-cover',
     );
   }
   console.log('4. Replace example feeds with your actual RSS feed URLs');
   console.log(
     '5. Create your R2 bucket: wrangler r2 bucket create YOUR_BUCKET_NAME',
   );
-  console.log('6. Deploy your worker: bun run deploy\n');
+  console.log('6. Deploy your worker: pnpm run deploy\n');
 }
 
 function logFeedImageStatus(feedImageUrl: string | undefined): void {
@@ -97,7 +95,7 @@ function logFeedImageStatus(feedImageUrl: string | undefined): void {
   }
   console.log('✅ Custom feed image configured!');
   console.log(
-    '💡 Tip: You can also host images directly in R2 with: bun run upload-cover',
+    '💡 Tip: You can also host images directly in R2 with: pnpm run upload-cover',
   );
 }
 

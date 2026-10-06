@@ -545,19 +545,30 @@ async function loadJobEpisodes(
   jobId: string,
   feedCount: number,
 ): Promise<SerializedMergedEpisode[]> {
-  const allSerialized: SerializedMergedEpisode[] = [];
-  for (let index = 0; index < feedCount; index++) {
-    const object = await environment.XML_BUCKET.get(shardKey(jobId, index));
-    if (!object) {
-      throw new Error(`Missing rebuild shard for feed index ${index}`);
-    }
-    const parsed = JSON.parse(await object.text()) as SerializedMergedEpisode[];
-    if (!Array.isArray(parsed)) {
-      throw new TypeError(`Invalid rebuild shard JSON for feed index ${index}`);
-    }
-    allSerialized.push(...parsed);
-  }
-  return allSerialized;
+  const objects = await Promise.all(
+    Array.from({ length: feedCount }, (_, index) =>
+      environment.XML_BUCKET.get(shardKey(jobId, index)),
+    ),
+  );
+
+  const shards = await Promise.all(
+    objects.map(async (object, index) => {
+      if (!object) {
+        throw new Error(`Missing rebuild shard for feed index ${index}`);
+      }
+      const parsed = JSON.parse(
+        await object.text(),
+      ) as SerializedMergedEpisode[];
+      if (!Array.isArray(parsed)) {
+        throw new TypeError(
+          `Invalid rebuild shard JSON for feed index ${index}`,
+        );
+      }
+      return parsed;
+    }),
+  );
+
+  return shards.flat();
 }
 
 /**
@@ -765,16 +776,27 @@ async function handleQueueMessage(
   }
 }
 
+async function handleQueueMessages(
+  environment: RebuildEnv,
+  messages: readonly Message<RebuildMessage>[],
+): Promise<void> {
+  if (messages.length === 0) {
+    return;
+  }
+  await handleQueueMessage(environment, messages[0]);
+  await handleQueueMessages(environment, messages.slice(1));
+}
+
 /**
 Queue consumer entrypoint (max_batch_size should be 1).
+Messages are handled in order so a multi-message batch cannot interleave
+`process_feed` / `finalize` for the same job.
 */
 export async function handleRebuildQueueBatch(
   batch: MessageBatch<RebuildMessage>,
   environment: RebuildEnv,
 ): Promise<void> {
-  for (const message of batch.messages) {
-    await handleQueueMessage(environment, message);
-  }
+  await handleQueueMessages(environment, batch.messages);
 }
 
 /**

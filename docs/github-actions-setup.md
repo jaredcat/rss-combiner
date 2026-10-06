@@ -38,7 +38,7 @@ When you **create a repository from the template**, your repo has a **different 
 
    Under **Account Resources**, choose **Include** → **All accounts** (or pick the account that should host the Worker).
 
-   **Queues / Workers Paid:** Creating and using Queues typically requires **Workers Paid** (~$5/mo) to enable Queues on the account. After that, Queues have a free operations allotment. Free-tier-only accounts can still use `bun run generate` locally and serve a static `podcasts.xml`, but Save / cron / `/deploy-trigger` rebuilds need Queues.
+   **Queues / Workers Paid:** Creating and using Queues typically requires **Workers Paid** (~$5/mo) to enable Queues on the account. After that, Queues have a free operations allotment. Free-tier-only accounts can still use `pnpm run generate` locally and serve a static `podcasts.xml`, but Save / cron / `/deploy-trigger` rebuilds need Queues.
 
 6. **Continue to summary** → **Create Token** and copy the token once (you will not see it again).
 
@@ -110,4 +110,4 @@ The workflow will:
 | Bucket or Worker name taken                | Change `name` / `bucket_name` in `wrangler.toml` to something unique.                                                              |
 | Save succeeds but `/podcasts.xml` is stale | Wait for the queue job; refresh `/admin` for rebuild status. Check Workers logs for queue consumer errors.                         |
 
-For local development (Wrangler, `bun run dev`), create a KV namespace once and put its id in `wrangler.toml`, or copy the id from a successful GitHub Actions log after the first deploy. Queue bindings work with `wrangler.dev`; create the queue once (`bun run ensure-queue-ci` or `wrangler queues create …`) if you have not deployed yet.
+For local development (Wrangler, `pnpm run dev`), create a KV namespace once and put its id in `wrangler.toml`, or copy the id from a successful GitHub Actions log after the first deploy. Queue bindings work with `wrangler.dev`; create the queue once (`pnpm run ensure-queue-ci` or `wrangler queues create …`) if you have not deployed yet.

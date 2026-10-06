@@ -14,13 +14,13 @@ Thank you for your interest in contributing to the RSS Combiner template! This g
 2. **Install Dependencies**
 
    ```bash
-   bun install
+   pnpm install
    ```
 
 3. **Set up Test Environment**
    - Copy `wrangler.toml` and add some test RSS feeds
    - Optionally add a test `cover.jpg` image to test upload functionality
-   - Test locally with `bun run dev`
+   - Test locally with `pnpm run dev`
 
 ## How to Contribute
 
@@ -55,22 +55,22 @@ Thank you for your interest in contributing to the RSS Combiner template! This g
 
    ```bash
    # Test feed generation
-   bun run generate
+   pnpm run generate
 
    # Lint (ESLint + typescript-eslint + SonarJS)
-   bun run lint
+   pnpm run lint
 
    # Typecheck
-   bunx tsc --noEmit
+   pnpm exec tsc --noEmit
 
    # Test worker locally
-   bun run dev
+   pnpm run dev
 
    # Check setup script
-   bun run setup
+   pnpm run setup
 
    # Test cover upload (if working with image features)
-   bun run upload-cover
+   pnpm run upload-cover
    ```
 
 4. **Submit a Pull Request**
@@ -84,7 +84,7 @@ Thank you for your interest in contributing to the RSS Combiner template! This g
 - Follow existing naming conventions
 - Add JSDoc comments for public functions
 - Keep functions focused and single-purpose
-- Run `bun run lint` before opening a PR (CI runs the same check)
+- Run `pnpm run lint` before opening a PR (CI runs the same check)
 
 ## Areas for Contribution
 
@@ -116,11 +116,11 @@ When contributing code changes:
 
 1. **Local Testing**
    - Test with various RSS feed types
-   - Verify worker functionality with `bun run dev`
-   - Check XML output with `bun run generate`
+   - Verify worker functionality with `pnpm run dev`
+   - Check XML output with `pnpm run generate`
 
 2. **Image Upload Testing**
-   - Test `bun run upload-cover` with different image formats
+   - Test `pnpm run upload-cover` with different image formats
    - Verify R2 bucket integration
    - Check wrangler.toml updates correctly
 

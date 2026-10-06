@@ -17,28 +17,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Setup pnpm
+        uses: pnpm/setup@v3
         with:
-          bun-version: latest
-
-      - name: Install dependencies
-        run: bun install
+          cache: true
+          require-lockfile: true
 
       - name: Typecheck
-        run: bunx tsc --noEmit
+        run: pnpm exec tsc --noEmit
 
       - name: Lint
-        run: bun run lint
+        run: pnpm run lint
 
       - name: Format
-        run: bun run format:check
+        run: pnpm run format:check
 
       - name: Test
-        run: bun test
+        run: pnpm test
 
       - name: Validate configuration (setup script)
-        run: bun run setup
+        run: pnpm run setup
 
       - name: Check for common issues
         run: |

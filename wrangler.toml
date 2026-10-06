@@ -40,7 +40,7 @@ enabled = true
 [vars]
 # Feed metadata - customize these for your combined feed
 FEED_TITLE = "Chronological podcast mix (demo)"  # TODO: Customize your feed title
-FEED_IMAGE_URL = "https://your-podcasts-xml.r2.dev/cover.jpg"  # TODO: Upload with 'bun run upload-cover' or use external URL
+FEED_IMAGE_URL = "https://your-podcasts-xml.r2.dev/cover.jpg"  # TODO: Upload with 'pnpm run upload-cover' or use external URL
 # Match your bucket name (same as bucket_name above). Enables “Upload to R2” in /admin and correct cover URLs:
 # R2_PUBLIC_BASE_URL = "https://your-podcasts-xml.r2.dev"
 # PUBLIC_BASE_URL = "https://your-worker.workers.dev"  # Optional: RSS feed_url / site_url (see README)

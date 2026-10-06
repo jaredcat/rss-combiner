@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 /**
 Ensures a Workers KV namespace exists for CONFIG_KV and patches wrangler.toml
 when the id is still the template placeholder. Intended for GitHub Actions CI.

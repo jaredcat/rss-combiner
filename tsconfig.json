@@ -20,9 +20,8 @@
     "skipLibCheck": true,
     "noFallthroughCasesInSwitch": true,
 
-    // Scripts import node: builtins; without this, TS treats `node:fs/promises` as a name.
-    // "bun" supplies `bun:test` and `import.meta.main`.
-    "types": ["node", "bun"],
+    // Scripts use node: builtins; worker tests use cloudflare:test / cloudflare:workers.
+    "types": ["node", "@cloudflare/vitest-plugin/types"],
 
     // Some stricter flags (disabled by default)
     "noUnusedLocals": false,

@@ -52,7 +52,8 @@ export default defineConfig(
       'dist/**',
       'worker-configuration.d.ts',
       'podcasts.xml',
-      'bun.lockb',
+      'pnpm-lock.yaml',
+      'worker-configuration.d.ts',
     ],
   },
   ...narwhal({
@@ -106,14 +107,18 @@ export default defineConfig(
     },
   },
   {
+    files: ['vitest.config.ts'],
+    rules: {
+      // Vitest configs export defineConfig(...) at the top level by design.
+      'unicorn/no-top-level-side-effects': 'off',
+    },
+  },
+  {
     files: ['**/*.test.ts'],
     rules: {
       'unicorn/no-top-level-assignment-in-function': 'off',
-      // Fake R2/KV adapters match Worker APIs (async) without needing awaits.
       '@typescript-eslint/require-await': 'off',
       '@typescript-eslint/no-empty-function': 'off',
-      // bun:test `expect(…).resolves` typings are not Thenable under tseslint.
-      '@typescript-eslint/await-thenable': 'off',
       '@typescript-eslint/no-confusing-void-expression': 'off',
     },
   },

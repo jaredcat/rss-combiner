@@ -2,8 +2,7 @@ node_modules
 .wrangler
 dist
 coverage
-bun.lock
-bun.lockb
+pnpm-lock.yaml
 worker-configuration.d.ts
 podcasts.xml
 cover.jpg
