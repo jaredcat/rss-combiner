@@ -55,6 +55,12 @@ Click "Use this template" on GitHub to create your own repository.
 pnpm install
 ```
 
+For a personal local deploy (existing Worker / KV / R2) without editing the committed template, copy the config and fill in your real values there — `pnpm run deploy` / `dev` / `build` use it automatically when present:
+
+```bash
+cp wrangler.toml wrangler.local.toml
+```
+
 ### 3. Add Your Cover Image (Optional)
 
 Place a cover image in your project root as `cover.jpg`, `cover.jpeg`, or `cover.png`:

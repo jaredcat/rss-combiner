@@ -13,10 +13,11 @@ bucket_name = "your-podcasts-xml"  # TODO: Change this to your unique bucket nam
 
 # KV stores admin-editable feed config (title, image, feeds, cover mode).
 # GitHub Actions creates the namespace and patches this id on each deploy while it stays the placeholder.
-# For local dev only: wrangler kv namespace create rss-combiner-kv-<worker-name> — or copy the id from CI logs after first deploy.
+# For local deploy of an existing Worker: copy wrangler.toml → wrangler.local.toml (gitignored)
+# and set real name / bucket / KV id / queue there. `pnpm run deploy` picks it up automatically.
 [[kv_namespaces]]
 binding = "CONFIG_KV"
-id = "00000000000000000000000000000000"  # Replaced automatically in CI, or paste a real id for local wrangler dev
+id = "00000000000000000000000000000000"  # Replaced automatically in CI, or paste a real id for local wrangler.dev
 
 # Sequential rebuild: one queue message ≈ one source feed, then finalize → podcasts.xml.
 # CI creates the queue and syncs the name from `name` above (rss-combiner-rebuild-<worker-name>).

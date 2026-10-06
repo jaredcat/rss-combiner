@@ -179,6 +179,7 @@ dist
 .wrangler
 .dev.vars
 .env
+wrangler.local.toml
 worker-configuration.d.ts
 
 # Generated content

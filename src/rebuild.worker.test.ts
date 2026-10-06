@@ -4,6 +4,8 @@ import { env as workersEnv } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import {
   claimPublishedPointer,
+  deleteSupersededRebuildArtifacts,
+  jobOutputKey,
   REBUILD_CURRENT_KV_KEY,
   REBUILD_PUBLISHED_R2_KEY,
   type RebuildEnv as RebuildEnvironment,
@@ -145,5 +147,32 @@ describe('claimPublishedPointer', () => {
       claimPublishedPointer(environment, 'job-superseded', OLD),
     ).resolves.toBe(false);
     expect(await publishedPointer()).toBeUndefined();
+  });
+});
+
+describe('deleteSupersededRebuildArtifacts', () => {
+  test('keeps the live job output and published pointer; deletes older jobs', async () => {
+    const environment = rebuildEnv();
+    await setPublished('job-live', NEW);
+    await env.XML_BUCKET.put(jobOutputKey('job-live'), '<live/>', {
+      httpMetadata: { contentType: 'application/xml' },
+    });
+    await env.XML_BUCKET.put(jobOutputKey('job-old'), '<old/>', {
+      httpMetadata: { contentType: 'application/xml' },
+    });
+    await env.XML_BUCKET.put('rebuild/job-old/0.json', '[]', {
+      httpMetadata: { contentType: 'application/json' },
+    });
+    await env.XML_BUCKET.put('podcasts.xml', '<mirror/>', {
+      httpMetadata: { contentType: 'application/xml' },
+    });
+
+    await deleteSupersededRebuildArtifacts(environment, 'job-live');
+
+    expect(await env.XML_BUCKET.head(jobOutputKey('job-live'))).toBeTruthy();
+    expect(await env.XML_BUCKET.head(REBUILD_PUBLISHED_R2_KEY)).toBeTruthy();
+    expect(await env.XML_BUCKET.head('podcasts.xml')).toBeTruthy();
+    expect(await env.XML_BUCKET.head(jobOutputKey('job-old'))).toBeNull();
+    expect(await env.XML_BUCKET.head('rebuild/job-old/0.json')).toBeNull();
   });
 });

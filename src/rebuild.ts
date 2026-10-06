@@ -405,7 +405,7 @@ async function mirrorPublicPodcastsXml(
 }
 
 /**
-Delete per-feed JSON shards; keep `rebuild/{jobId}/podcasts.xml` as the live artifact.
+Delete per-feed JSON shards for a job; keep `rebuild/{jobId}/podcasts.xml`.
 */
 async function deleteFeedShards(
   environment: RebuildEnv,
@@ -422,6 +422,38 @@ async function deleteFeedShards(
     await Promise.all(
       listed.objects
         .filter((object) => object.key.endsWith('.json'))
+        .map((object) => environment.XML_BUCKET.delete(object.key)),
+    );
+    if (!listed.truncated) {
+      break;
+    }
+    cursor = listed.cursor;
+  }
+}
+
+/**
+Delete rebuild artifacts for every job except `keepJobId`.
+Keeps `rebuild/published.json` and `rebuild/{keepJobId}/*`.
+*/
+export async function deleteSupersededRebuildArtifacts(
+  environment: RebuildEnv,
+  keepJobId: string,
+): Promise<void> {
+  const keepPrefix = shardPrefix(keepJobId);
+  let cursor: string | undefined;
+  for (;;) {
+    const listed = await environment.XML_BUCKET.list({
+      prefix: 'rebuild/',
+      cursor,
+      limit: 1000,
+    });
+    await Promise.all(
+      listed.objects
+        .filter(
+          (object) =>
+            object.key !== REBUILD_PUBLISHED_R2_KEY &&
+            !object.key.startsWith(keepPrefix),
+        )
         .map((object) => environment.XML_BUCKET.delete(object.key)),
     );
     if (!listed.truncated) {
@@ -604,6 +636,17 @@ async function finishReadyCleanup(
     await deleteFeedShards(environment, jobId);
   } catch (error) {
     console.error('Rebuild shard cleanup failed (feed is ready):', error);
+  }
+
+  // Only prune history once this job owns the live pointer — otherwise we
+  // could delete another job's still-published staged XML.
+  try {
+    const publishedId = await getPublishedJobId(environment);
+    if (publishedId === jobId) {
+      await deleteSupersededRebuildArtifacts(environment, jobId);
+    }
+  } catch (error) {
+    console.error('Rebuild superseded artifact cleanup failed:', error);
   }
 }
 

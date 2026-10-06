@@ -1,6 +1,6 @@
 {
   "name": "rss-combiner",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "author": "RSS Combiner Template",
   "repository": {
     "type": "git",
@@ -28,9 +28,9 @@
     "ensure-kv-ci": "tsx scripts/ensure-kv-ci.ts",
     "ensure-queue-ci": "tsx scripts/ensure-queue-ci.ts",
     "upload-cover": "tsx scripts/upload-cover.ts",
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "build": "wrangler build",
+    "dev": "tsx scripts/wrangler-with-local.ts dev",
+    "deploy": "tsx scripts/wrangler-with-local.ts deploy",
+    "build": "tsx scripts/wrangler-with-local.ts build",
     "generate": "tsx scripts/generate-xml.ts > podcasts.xml",
     "test-local": "tsx scripts/generate-xml.ts | head -50",
     "test": "vitest run",
