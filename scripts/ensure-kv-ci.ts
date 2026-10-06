@@ -26,11 +26,11 @@ async function resolveAccountId(
   const r = await fetch('https://api.cloudflare.com/client/v4/accounts', {
     headers: { Authorization: `Bearer ${token}` },
   });
-  const index = (await r.json()) as {
+  const index = await r.json<{
     success: boolean;
-    result?: Array<{ id: string; name: string }>;
+    result?: { id: string; name: string }[];
     errors?: unknown;
-  };
+  }>();
   if (!index.success || !index.result?.length) {
     console.error(
       'Could not resolve Cloudflare account. Set CLOUDFLARE_ACCOUNT_ID in repository secrets.',
@@ -50,8 +50,8 @@ async function resolveAccountId(
 async function listKvNamespaces(
   accountId: string,
   token: string,
-): Promise<Array<{ id: string; title: string }>> {
-  const out: Array<{ id: string; title: string }> = [];
+): Promise<{ id: string; title: string }[]> {
+  const out: { id: string; title: string }[] = [];
   let page = 1;
   const perPage = 1000;
   for (;;) {
@@ -63,12 +63,12 @@ async function listKvNamespaces(
     const r = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    const index = (await r.json()) as {
+    const index = await r.json<{
       success: boolean;
-      result: Array<{ id: string; title: string }>;
+      result: { id: string; title: string }[];
       result_info?: { total_count: number };
       errors?: unknown;
-    };
+    }>();
     if (!index.success) {
       console.error('KV namespace list failed:', index.errors);
       process.exit(1);
@@ -97,11 +97,11 @@ async function createKvNamespace(
       body: JSON.stringify({ title }),
     },
   );
-  const index = (await r.json()) as {
+  const index = await r.json<{
     success: boolean;
     result?: { id: string; title: string };
-    errors?: Array<{ code: number; message: string }>;
-  };
+    errors?: { code: number; message: string }[];
+  }>();
   if (index.success && index.result?.id) {
     return index.result.id;
   }
@@ -138,10 +138,7 @@ function patchWranglerKvId(content: string, newId: string): string {
     );
     process.exit(1);
   }
-  return content.replace(
-    `id = "${PLACEHOLDER_ID}"`,
-    () => `id = "${newId}"`,
-  );
+  return content.replace(`id = "${PLACEHOLDER_ID}"`, () => `id = "${newId}"`);
 }
 
 async function main() {

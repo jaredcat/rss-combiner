@@ -42,7 +42,7 @@ export async function getPreviewFeedText(url: string): Promise<string> {
         cacheTtl: 900,
         cacheEverything: true,
       },
-    } as Parameters<typeof fetch>[1]);
+    });
   } catch {
     // e.g. local dev / non-Workers runtimes that reject unknown `cf` options
     response = await fetch(url);

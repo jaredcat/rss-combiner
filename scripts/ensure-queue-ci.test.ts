@@ -29,8 +29,12 @@ max_batch_size = 1
 
     const patched = patchWranglerQueueNames(toml, NEW_QUEUE);
 
-    expect(patched).toContain(`binding = "REBUILD_QUEUE"\nqueue = "${NEW_QUEUE}"`);
-    expect(patched).toContain('binding = "OTHER_QUEUE"\nqueue = "unrelated-queue"');
+    expect(patched).toContain(
+      `binding = "REBUILD_QUEUE"\nqueue = "${NEW_QUEUE}"`,
+    );
+    expect(patched).toContain(
+      'binding = "OTHER_QUEUE"\nqueue = "unrelated-queue"',
+    );
     expect(patched).toContain(`queue = "${NEW_QUEUE}"\nmax_batch_size = 1`);
     expect(patched).toContain('queue = "unrelated-queue"\nmax_batch_size = 10');
     expect(patched).not.toContain('rss-combiner-rebuild-old-name');

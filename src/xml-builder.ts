@@ -9,13 +9,47 @@ RSS `pubDate` may be a string or `{ '#text': string }` from fast-xml-parser.
 function normalizeRssText(value: unknown): string {
   if (value == undefined) return '';
   if (typeof value === 'string') return value;
-  return typeof value === 'object' && value !== null && '#text' in value ? String((value as { '#text': unknown })['#text']) : '';
+  return typeof value === 'object' && '#text' in value
+    ? String(value['#text'])
+    : '';
+}
+
+type RssAttributeText = string | { '#text'?: string; '@_isPermaLink'?: string };
+
+interface RssEnclosure {
+  '@_url'?: string;
+  '@_type'?: string;
+  '@_length'?: string;
+}
+
+interface RssItem {
+  title?: unknown;
+  link?: unknown;
+  guid?: RssAttributeText;
+  description?: unknown;
+  pubDate?: unknown;
+  enclosure?: RssEnclosure;
+  'itunes:duration'?: unknown;
+  'itunes:image'?: { '@_href'?: string };
+  'itunes:explicit'?: unknown;
+  'itunes:episodeType'?: unknown;
+}
+
+interface RssChannel {
+  title?: unknown;
+  item?: RssItem | RssItem[];
+  image?: { url?: string };
+  'itunes:image'?: { '@_href'?: string };
+}
+
+interface ParsedRssDocument {
+  rss?: { channel?: RssChannel };
 }
 
 /**
 Episode after parse + timeline shift (in-memory).
 */
-export type CustomItem = {
+export interface CustomItem {
   title: string;
   link?: string;
   guid?: {
@@ -38,27 +72,27 @@ export type CustomItem = {
   'itunes:episodeType'?: string;
   pubDateOriginal: string;
   sortDate: Date;
-};
+}
 
 /**
 One episode bound to its source feed (for merge + R2 shards).
 */
-export type MergedEpisode = {
+export interface MergedEpisode {
   item: CustomItem;
   feedTitle: string;
   feedUrl: string;
   feedImage?: string;
-};
+}
 
 /**
 JSON-safe shard stored in R2 during queue rebuild.
 */
-export type SerializedMergedEpisode = {
+export interface SerializedMergedEpisode {
   item: Omit<CustomItem, 'sortDate'> & { sortDate: string };
   feedTitle: string;
   feedUrl: string;
   feedImage?: string;
-};
+}
 
 function compareStrings(a: string, b: string): number {
   if (a === b) return 0;
@@ -76,8 +110,7 @@ function compareSortTimes(a: Date, b: Date): number {
 }
 
 function guidSortKey(item: CustomItem): string {
-  const value = item.guid?.value;
-  return typeof value === 'string' ? value : String(value ?? '');
+  return item.guid?.value ?? '';
 }
 
 /**
@@ -95,10 +128,10 @@ export function compareItems(
   const byGuid = compareStrings(guidSortKey(a), guidSortKey(b));
   if (byGuid !== 0) return byGuid;
 
-  const byLink = compareStrings(a.link || '', b.link || '');
+  const byLink = compareStrings(a.link ?? '', b.link ?? '');
   if (byLink !== 0) return byLink;
 
-  const byTitle = compareStrings(a.title || '', b.title || '');
+  const byTitle = compareStrings(a.title, b.title);
   return byTitle === 0 ? compareStrings(aSource, bSource) : byTitle;
 }
 
@@ -168,14 +201,17 @@ async function parseFeed(
           },
         },
   );
-  const result = parser.parse(text);
-  const channel = result.rss.channel;
+  const result = parser.parse(text) as ParsedRssDocument;
+  const channel = result.rss?.channel;
+  if (!channel) {
+    return { title: '', items: [], image: undefined };
+  }
 
   const today = new Date();
   today.setHours(23, 59, 59);
 
   const rawItems = channel.item;
-  let itemList: any[] = [];
+  let itemList: RssItem[] = [];
   if (Array.isArray(rawItems)) {
     itemList = rawItems;
   } else if (rawItems) {
@@ -183,7 +219,7 @@ async function parseFeed(
   }
 
   const items: CustomItem[] = itemList
-    .flatMap((item: any): CustomItem[] => {
+    .flatMap((item): CustomItem[] => {
       const originalDate = new Date(normalizeRssText(item.pubDate));
       const sortDate = new Date(originalDate);
 
@@ -214,28 +250,30 @@ async function parseFeed(
 
       return [
         {
-          title: item.title || '',
-          link: item.link || '',
+          title: normalizeRssText(item.title),
+          link: normalizeRssText(item.link),
           guid: item.guid
             ? {
                 value: normalizeRssText(item.guid),
-                isPermaLink: item.guid['@_isPermaLink'] === 'true',
+                isPermaLink:
+                  typeof item.guid === 'object' &&
+                  item.guid['@_isPermaLink'] === 'true',
               }
             : undefined,
-          description: isLightweight ? '' : item.description || '',
+          description: isLightweight ? '' : normalizeRssText(item.description),
           pubDate: sortDate.toUTCString(), // Use adjusted date
           pubDateOriginal: originalDate.toUTCString(), // Keep original date
           enclosure: item.enclosure
             ? {
-                url: item.enclosure['@_url'] || '',
-                type: item.enclosure['@_type'] || '',
-                length: item.enclosure['@_length'] || '',
+                url: item.enclosure['@_url'] ?? '',
+                type: item.enclosure['@_type'] ?? '',
+                length: item.enclosure['@_length'] ?? '',
               }
             : undefined,
-          'itunes:duration': item['itunes:duration'] || '',
-          'itunes:image': item['itunes:image']?.['@_href'] || '',
-          'itunes:explicit': item['itunes:explicit'] || '',
-          'itunes:episodeType': item['itunes:episodeType'] || '',
+          'itunes:duration': normalizeRssText(item['itunes:duration']),
+          'itunes:image': item['itunes:image']?.['@_href'] ?? '',
+          'itunes:explicit': normalizeRssText(item['itunes:explicit']),
+          'itunes:episodeType': normalizeRssText(item['itunes:episodeType']),
           sortDate,
         },
       ];
@@ -243,9 +281,9 @@ async function parseFeed(
     .toSorted((ep1: CustomItem, ep2: CustomItem) => compareItems(ep1, ep2));
 
   return {
-    title: channel.title || '',
+    title: normalizeRssText(channel.title),
     items,
-    image: channel['itunes:image']?.['@_href'] || channel.image?.url,
+    image: channel['itunes:image']?.['@_href'] ?? channel.image?.url,
   };
 }
 
@@ -254,10 +292,10 @@ function episodeItunesImageElements(
   feedImageUrl: string | undefined,
   itemItunesImage: string,
   feedImage: string | undefined,
-): false | { 'itunes:image': { _attr: { href: string } } } {
+): { 'itunes:image': { _attr: { href: string } } } | undefined {
   if (coverMode === 'main') {
     if (!feedImageUrl) {
-      return false;
+      return undefined;
     }
     return {
       'itunes:image': { _attr: { href: feedImageUrl } },
@@ -265,7 +303,7 @@ function episodeItunesImageElements(
   }
   if (coverMode === 'per_feed_main') {
     if (!feedImage) {
-      return false;
+      return undefined;
     }
     return {
       'itunes:image': { _attr: { href: feedImage } },
@@ -273,7 +311,7 @@ function episodeItunesImageElements(
   }
   const href = itemItunesImage || feedImage;
   if (!href) {
-    return false;
+    return undefined;
   }
   return {
     'itunes:image': { _attr: { href } },
@@ -325,7 +363,7 @@ function createRssChannel(config: AppConfig): RSS {
     }),
     custom_namespaces: {
       // Podcast namespace URIs are historically http:// (not fetch URLs).
-       
+
       itunes: 'https://www.itunes.com/dtds/podcast-1.0.dtd',
       content: 'https://purl.org/rss/1.0/modules/content/',
     },
@@ -357,7 +395,11 @@ function appendEpisodesToRss(
     itemsForOutput[0].item.pubDate,
   ).getUTCMonth();
 
-  for (const { item, feedTitle: sourceFeedTitle, feedImage } of itemsForOutput) {
+  for (const {
+    item,
+    feedTitle: sourceFeedTitle,
+    feedImage,
+  } of itemsForOutput) {
     const itemTitle = `${item.title || ''} - ${sourceFeedTitle}`;
     episode++;
 
@@ -381,18 +423,18 @@ function appendEpisodesToRss(
     feed.item({
       title: itemTitle,
       description: body,
-      url: item.link || '',
-      guid: item.guid?.value || item.link || '',
-      date: new Date(item.pubDate || ''),
+      url: item.link ?? '',
+      guid: item.guid?.value ?? item.link ?? '',
+      date: new Date(item.pubDate),
       enclosure: item.enclosure,
       custom_elements: [
         { 'itunes:title': itemTitle },
-        { 'itunes:duration': item['itunes:duration'] || '' },
+        { 'itunes:duration': item['itunes:duration'] ?? '' },
         { 'itunes:summary': body },
-        { 'itunes:episodeType': item['itunes:episodeType'] || 'full' },
-        { 'itunes:explicit': item['itunes:explicit'] || 'false' },
-        { 'itunes:season': item['itunes:season'] || season },
-        { 'itunes:episode': item['itunes:episode'] || episode },
+        { 'itunes:episodeType': item['itunes:episodeType'] ?? 'full' },
+        { 'itunes:explicit': item['itunes:explicit'] ?? 'false' },
+        { 'itunes:season': item['itunes:season'] ?? season },
+        { 'itunes:episode': item['itunes:episode'] ?? episode },
         { pubDateOriginal: item.pubDateOriginal },
         imgElement,
       ].filter(Boolean),
@@ -427,26 +469,22 @@ export async function parseAndFilterFeed(
     { lightweight: options?.lightweight === true },
   );
 
-  const channelTitle =
-    typeof parsedFeed.title === 'string'
-      ? parsedFeed.title.trim()
-      : String(parsedFeed.title ?? '').trim();
+  const channelTitle = parsedFeed.title.trim();
 
   const episodes: MergedEpisode[] = [];
   for (const item of parsedFeed.items) {
-    if (!item.pubDate) continue;
-    const pubDate = new Date(item.pubDateOriginal || '');
+    const pubDate = new Date(item.pubDateOriginal);
     const cutoffDate = new Date(
-      Number(feedConfig.cutoffYear || defaultYear),
-      Number(feedConfig.cutoffMonth || defaultMonth) - 1,
-      Number(feedConfig.cutoffDay || defaultDay),
+      Number(feedConfig.cutoffYear ?? defaultYear),
+      Number(feedConfig.cutoffMonth ?? defaultMonth) - 1,
+      Number(feedConfig.cutoffDay ?? defaultDay),
     );
     cutoffDate.setHours(0, 0, 0, 0);
     if (cutoffDate >= pubDate) continue;
 
     episodes.push({
       item,
-      feedTitle: parsedFeed.title || '',
+      feedTitle: parsedFeed.title,
       feedUrl: feedConfig.url,
       feedImage: parsedFeed.image,
     });
@@ -473,7 +511,7 @@ export function buildPodcastsXml(
   return feed.xml({ indent: options?.indent !== false });
 }
 
-type FetchXmlOptions = {
+interface FetchXmlOptions {
   quiet?: boolean;
   /**
   When true (admin preview), reuse in-memory + edge-cached source RSS bodies.
@@ -495,15 +533,15 @@ type FetchXmlOptions = {
   Drop episode HTML bodies while parsing (admin preview).
   */
   lightweight?: boolean;
-};
+}
 
-type FetchXmlWithTitles = {
+interface FetchXmlWithTitles {
   xml: string;
   channelTitles: string[];
   previewTruncated?: boolean;
   previewTotalItems?: number;
   previewSlice?: 'newest' | 'oldest';
-};
+}
 
 async function fetchXml(
   config: AppConfig,
@@ -569,11 +607,7 @@ async function fetchXml(
     const itemSlice = options?.itemSlice === 'oldest' ? 'oldest' : 'newest';
     previewMeta.total = allItems.length;
     previewMeta.slice = itemSlice;
-    const selected = selectPreviewItems(
-      allItems,
-      options?.maxItems,
-      itemSlice,
-    );
+    const selected = selectPreviewItems(allItems, options?.maxItems, itemSlice);
     previewMeta.truncated = selected.truncated;
     const itemsForOutput = selected.items;
 

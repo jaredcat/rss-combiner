@@ -28,13 +28,13 @@ When you **create a repository from the template**, your repo has a **different 
 4. Name it (e.g. `rss-combiner-github`).
 5. Permissions — add:
 
-   | Resource | Permission |
-   |----------|------------|
-   | Account — **Workers Scripts** | Edit |
-   | Account — **Workers KV Storage** | Edit |
-   | Account — **Workers R2 Storage** | Edit |
-   | Account — **Queues** | Edit |
-   | Account — **Account Settings** | Read (optional; helps some accounts resolve correctly) |
+   | Resource                         | Permission                                             |
+   | -------------------------------- | ------------------------------------------------------ |
+   | Account — **Workers Scripts**    | Edit                                                   |
+   | Account — **Workers KV Storage** | Edit                                                   |
+   | Account — **Workers R2 Storage** | Edit                                                   |
+   | Account — **Queues**             | Edit                                                   |
+   | Account — **Account Settings**   | Read (optional; helps some accounts resolve correctly) |
 
    Under **Account Resources**, choose **Include** → **All accounts** (or pick the account that should host the Worker).
 
@@ -51,11 +51,11 @@ In your **new** repo (not the template source):
 1. **Settings** → **Secrets and variables** → **Actions** → **New repository secret**.
 2. Add:
 
-   | Name | Value |
-   |------|--------|
-   | `CLOUDFLARE_API_TOKEN` | The token from step 2 |
-   | `ADMIN_SECRET` | A password you choose for `/admin` on your worker (`https://<worker-name>.workers.dev/admin`) |
-   | `CLOUDFLARE_ACCOUNT_ID` | *(Only if the deploy log asks for it or you have multiple Cloudflare accounts)* Your Account ID from the dashboard |
+   | Name                    | Value                                                                                                              |
+   | ----------------------- | ------------------------------------------------------------------------------------------------------------------ |
+   | `CLOUDFLARE_API_TOKEN`  | The token from step 2                                                                                              |
+   | `ADMIN_SECRET`          | A password you choose for `/admin` on your worker (`https://<worker-name>.workers.dev/admin`)                      |
+   | `CLOUDFLARE_ACCOUNT_ID` | _(Only if the deploy log asks for it or you have multiple Cloudflare accounts)_ Your Account ID from the dashboard |
 
 Without `ADMIN_SECRET`, the Worker deploys but **`/admin` stays disabled** until you set the secret (locally: `wrangler secret put ADMIN_SECRET`).
 
@@ -102,12 +102,12 @@ The workflow will:
 
 ## Troubleshooting
 
-| Problem | What to try |
-|--------|-------------|
-| Deploy fails with auth / account errors | Confirm `CLOUDFLARE_API_TOKEN` permissions (including **Queues Edit**); add `CLOUDFLARE_ACCOUNT_ID` if you have multiple accounts. |
-| Deploy fails creating a Queue | Enable Queues / upgrade to **Workers Paid**, then re-run deploy. |
-| `/admin` says disabled | Add `ADMIN_SECRET` in GitHub secrets and re-run deploy, or run `wrangler secret put ADMIN_SECRET` after a local deploy. |
-| Bucket or Worker name taken | Change `name` / `bucket_name` in `wrangler.toml` to something unique. |
-| Save succeeds but `/podcasts.xml` is stale | Wait for the queue job; refresh `/admin` for rebuild status. Check Workers logs for queue consumer errors. |
+| Problem                                    | What to try                                                                                                                        |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Deploy fails with auth / account errors    | Confirm `CLOUDFLARE_API_TOKEN` permissions (including **Queues Edit**); add `CLOUDFLARE_ACCOUNT_ID` if you have multiple accounts. |
+| Deploy fails creating a Queue              | Enable Queues / upgrade to **Workers Paid**, then re-run deploy.                                                                   |
+| `/admin` says disabled                     | Add `ADMIN_SECRET` in GitHub secrets and re-run deploy, or run `wrangler secret put ADMIN_SECRET` after a local deploy.            |
+| Bucket or Worker name taken                | Change `name` / `bucket_name` in `wrangler.toml` to something unique.                                                              |
+| Save succeeds but `/podcasts.xml` is stale | Wait for the queue job; refresh `/admin` for rebuild status. Check Workers logs for queue consumer errors.                         |
 
 For local development (Wrangler, `bun run dev`), create a KV namespace once and put its id in `wrangler.toml`, or copy the id from a successful GitHub Actions log after the first deploy. Queue bindings work with `wrangler.dev`; create the queue once (`bun run ensure-queue-ci` or `wrangler queues create …`) if you have not deployed yet.

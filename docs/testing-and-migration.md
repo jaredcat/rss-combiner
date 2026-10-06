@@ -113,9 +113,9 @@ If the old Worker used a **custom domain** or **routes**, re-check **Workers & P
 
 ## Quick checklist
 
-| Item | Action |
-|------|--------|
-| Same Worker URL | `name` = existing Worker name |
-| Same RSS file / cover in R2 | `bucket_name` = existing bucket |
-| Keep admin settings | Real KV `id` in `wrangler.toml`, not placeholder |
-| Same `/admin` password | `ADMIN_SECRET` in GitHub + workflow, or `wrangler secret put` |
+| Item                        | Action                                                        |
+| --------------------------- | ------------------------------------------------------------- |
+| Same Worker URL             | `name` = existing Worker name                                 |
+| Same RSS file / cover in R2 | `bucket_name` = existing bucket                               |
+| Keep admin settings         | Real KV `id` in `wrangler.toml`, not placeholder              |
+| Same `/admin` password      | `ADMIN_SECRET` in GitHub + workflow, or `wrangler secret put` |

@@ -4,6 +4,11 @@ import { parse, stringify } from '@iarna/toml';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 
+interface WranglerToml {
+  r2_buckets?: { bucket_name?: string }[];
+  vars?: { FEED_IMAGE_URL?: string; FEED_TITLE?: string };
+}
+
 async function uploadCover() {
   console.log('🎨 Uploading cover image to R2...\n');
 
@@ -33,8 +38,8 @@ async function uploadCover() {
 
   // Read wrangler config to get bucket name
   const wranglerContent = await fs.readFile('wrangler.toml', 'utf8');
-  const config = parse(wranglerContent);
-  const bucketName = (config.r2_buckets as any)?.[0]?.bucket_name as string;
+  const config = parse(wranglerContent) as WranglerToml;
+  const bucketName = config.r2_buckets?.[0]?.bucket_name;
 
   if (!bucketName) {
     console.log('❌ No R2 bucket configured in wrangler.toml');
@@ -54,10 +59,11 @@ async function uploadCover() {
 
     // Update the FEED_IMAGE_URL in the config
     const updatedConfig = { ...config };
-    if (!updatedConfig.vars) {
-      updatedConfig.vars = {};
-    }
-    (updatedConfig.vars as any).FEED_IMAGE_URL = imageUrl;
+    updatedConfig.vars ??= {};
+    updatedConfig.vars = {
+      ...updatedConfig.vars,
+      FEED_IMAGE_URL: imageUrl,
+    };
 
     // Write back to wrangler.toml
     const updatedContent = stringify(updatedConfig);

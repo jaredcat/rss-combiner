@@ -27,11 +27,11 @@ async function resolveAccountId(
   const r = await fetch('https://api.cloudflare.com/client/v4/accounts', {
     headers: { Authorization: `Bearer ${token}` },
   });
-  const index = (await r.json()) as {
+  const index = await r.json<{
     success: boolean;
-    result?: Array<{ id: string; name: string }>;
+    result?: { id: string; name: string }[];
     errors?: unknown;
-  };
+  }>();
   if (!index.success || !index.result?.length) {
     console.error(
       'Could not resolve Cloudflare account. Set CLOUDFLARE_ACCOUNT_ID in repository secrets.',
@@ -48,12 +48,12 @@ async function resolveAccountId(
   return index.result[0].id;
 }
 
-type QueueListItem = {
+interface QueueListItem {
   queue_id?: string;
   queue_name?: string;
   id?: string;
   name?: string;
-};
+}
 
 async function listQueues(
   accountId: string,
@@ -71,12 +71,12 @@ async function listQueues(
     const r = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    const index = (await r.json()) as {
+    const index = await r.json<{
       success: boolean;
       result?: QueueListItem[];
       result_info?: { total_count?: number; count?: number };
       errors?: unknown;
-    };
+    }>();
     if (!index.success) {
       console.error('Queue list failed:', index.errors);
       process.exit(1);
@@ -110,10 +110,10 @@ async function createQueue(
       body: JSON.stringify({ queue_name: queueName }),
     },
   );
-  const index = (await r.json()) as {
+  const index = await r.json<{
     success: boolean;
-    errors?: Array<{ code: number; message: string }>;
-  };
+    errors?: { code: number; message: string }[];
+  }>();
   if (index.success) {
     console.log(`Created queue "${queueName}"`);
     return;
@@ -154,8 +154,8 @@ absorb a sibling section's keys.
 export function eachTomlTableBlock(
   content: string,
   header: '[[queues.producers]]' | '[[queues.consumers]]',
-): Array<{ start: number; end: number; body: string }> {
-  const blocks: Array<{ start: number; end: number; body: string }> = [];
+): { start: number; end: number; body: string }[] {
+  const blocks: { start: number; end: number; body: string }[] = [];
   let from = 0;
   for (;;) {
     const start = content.indexOf(header, from);

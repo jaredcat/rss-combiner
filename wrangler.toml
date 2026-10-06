@@ -1,7 +1,11 @@
 name = "your-podcast-feed-generator"  # TODO: Change this to your unique worker name
 main = "src/worker.ts"
-compatibility_date = "2026-09-01"
+compatibility_date = "2026-10-05"
 compatibility_flags = []
+
+# Place the Worker near upstream feeds / R2 when that reduces end-to-end latency.
+[placement]
+mode = "smart"
 
 [[r2_buckets]]
 binding = "XML_BUCKET"

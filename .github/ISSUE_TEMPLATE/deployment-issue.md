@@ -4,7 +4,6 @@ about: Report problems with GitHub Actions deployment
 title: '[DEPLOY] '
 labels: ['deployment', 'help wanted']
 assignees: ''
-
 ---
 
 ## Deployment Issue
@@ -19,6 +18,7 @@ assignees: ''
 
 **GitHub Actions Workflow Run:**
 <!-- If using GitHub Actions, please provide a link to the failed workflow run -->
+
 Link:
 
 **Configuration:**
@@ -36,12 +36,14 @@ FEED_01_URL = "https://example.com/feed1"
 
 **Error Messages:**
 <!-- Copy and paste any error messages from the GitHub Actions logs or local terminal -->
+
 ```
 Paste error messages here
 ```
 
 **Steps Taken:**
 <!-- What steps did you follow? -->
+
 1.
 2.
 3.

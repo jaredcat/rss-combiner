@@ -1,14 +1,22 @@
-import eslint from '@eslint/js';
 import narwhal from 'eslint-config-narwhal';
 import { defineConfig } from 'eslint/config';
 import globals from 'globals';
-import tseslint from 'typescript-eslint';
 
 const sharedRules = {
   '@typescript-eslint/no-explicit-any': 'off',
   '@typescript-eslint/no-unused-vars': [
     'warn',
     { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+  ],
+  // Pad indices / status codes in strings are intentional.
+  '@typescript-eslint/restrict-template-expressions': [
+    'error',
+    { allowNumber: true },
+  ],
+  // Empty-string defaults (`x || ''`) are intentional for RSS/form fields.
+  '@typescript-eslint/prefer-nullish-coalescing': [
+    'error',
+    { ignorePrimitives: { string: true } },
   ],
   // Cloudflare Workers + this repo use Env / env throughout.
   'unicorn/name-replacements': [
@@ -47,9 +55,23 @@ export default defineConfig(
       'bun.lockb',
     ],
   },
-  eslint.configs.recommended,
-  ...tseslint.configs.recommended,
-  ...narwhal,
+  ...narwhal({
+    typescript: true,
+    typechecked: true,
+    strict: true,
+    stylistic: true,
+    prettier: true,
+  }),
+  {
+    languageOptions: {
+      parserOptions: {
+        // allowJs in tsconfig already covers eslint.config.js; narwhal 2.1
+        // disables typed rules on that file. No allowDefaultProject needed.
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
   {
     files: ['src/**/*.ts'],
     languageOptions: {
@@ -69,10 +91,6 @@ export default defineConfig(
       globals: {
         ...globals.node,
       },
-      parserOptions: {
-        projectService: true,
-        tsconfigRootDir: import.meta.dirname,
-      },
     },
     rules: {
       ...sharedRules,
@@ -91,14 +109,12 @@ export default defineConfig(
     files: ['**/*.test.ts'],
     rules: {
       'unicorn/no-top-level-assignment-in-function': 'off',
-    },
-  },
-  {
-    files: ['src/admin.ts'],
-    rules: {
-      'sonarjs/cognitive-complexity': 'off',
-      'sonarjs/no-duplicate-string': 'off',
-      'sonarjs/no-identical-functions': 'off',
+      // Fake R2/KV adapters match Worker APIs (async) without needing awaits.
+      '@typescript-eslint/require-await': 'off',
+      '@typescript-eslint/no-empty-function': 'off',
+      // bun:test `expect(…).resolves` typings are not Thenable under tseslint.
+      '@typescript-eslint/await-thenable': 'off',
+      '@typescript-eslint/no-confusing-void-expression': 'off',
     },
   },
 );

@@ -93,7 +93,7 @@ function adminPageContext(
   return {
     deployedOrigin,
     deployedFeedUrl: `${deployedOrigin}/podcasts.xml`,
-    coverUploadEnabled: resolveCoverPublicUrl(environment) !== null,
+    coverUploadEnabled: resolveCoverPublicUrl(environment) !== undefined,
   };
 }
 
@@ -110,7 +110,7 @@ function appConfigFromFormData(form: FormData, environment: Env): AppConfig {
   const feedImageUrl = formText(form, 'feedImageUrl');
   const publicBaseUrl = formText(form, 'publicBaseUrl');
   const coverMode = parseCoverMode(formText(form, 'coverMode'));
-  const pad = Number(String(environment.FEED_INDEX_PADDING || '2'));
+  const pad = Number(environment.FEED_INDEX_PADDING || '2');
 
   const feeds = parseFeedsFromFormData(form);
 
@@ -138,11 +138,11 @@ function appConfigFromFormData(form: FormData, environment: Env): AppConfig {
   };
 }
 
-type RequestContext = {
+interface RequestContext {
   url: URL;
   secureCookie: boolean;
   executionCtx: ExecutionContext;
-};
+}
 
 type RouteHandler = (
   request: Request,
@@ -409,11 +409,11 @@ export default {
     }
 
     const url = new URL(request.url);
-    const handler = PATH_ROUTES[normalizePath(url.pathname)];
-    if (!handler) {
+    const path = normalizePath(url.pathname);
+    if (!Object.hasOwn(PATH_ROUTES, path)) {
       return new Response('Not found', { status: 404 });
     }
-    return handler(request, environment, {
+    return PATH_ROUTES[path](request, environment, {
       url,
       secureCookie: url.protocol === 'https:',
       executionCtx: context,

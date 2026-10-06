@@ -97,7 +97,12 @@ export function parseFeedsFromFormData(form: FormData): FeedEntry[] {
 function isValidStoredConfig(raw: unknown): raw is StoredConfig {
   if (!raw || typeof raw !== 'object') return false;
   const o = raw as Record<string, unknown>;
-  return (o.version !== 1) || !Array.isArray(o.feeds) || o.feeds.length === 0 ? false : o.feeds.every(isValidFeedEntry);
+  return (
+    o.version === 1 &&
+    Array.isArray(o.feeds) &&
+    o.feeds.length > 0 &&
+    o.feeds.every(isValidFeedEntry)
+  );
 }
 
 /**
@@ -115,16 +120,13 @@ export function envToAppConfig(environment: Environment): AppConfig {
       break;
     }
     feeds.push({
-      url: String(url),
+      url: url,
       cutoffYear: environment[`FEED_${paddedIndex}_CUTOFF_YEAR`] as
-        | string
-        | undefined,
+        string | undefined,
       cutoffMonth: environment[`FEED_${paddedIndex}_CUTOFF_MONTH`] as
-        | string
-        | undefined,
+        string | undefined,
       cutoffDay: environment[`FEED_${paddedIndex}_CUTOFF_DAY`] as
-        | string
-        | undefined,
+        string | undefined,
       mergeTimeline:
         environment[`FEED_${paddedIndex}_MERGE_TIMELINE`] === 'true' ||
         environment[`FEED_${paddedIndex}_DATE_SYNC`] === 'true',
@@ -132,16 +134,17 @@ export function envToAppConfig(environment: Environment): AppConfig {
   }
 
   const base =
-    (environment.PUBLIC_BASE_URL as string | undefined)?.replace(/\/$/, '') || '';
+    (environment.PUBLIC_BASE_URL as string | undefined)?.replace(/\/$/, '') ||
+    '';
 
   return {
     feedTitle: (environment.FEED_TITLE as string) || 'My Combined Podcast Feed',
-    feedImageUrl: environment.FEED_IMAGE_URL as string | undefined,
+    feedImageUrl: environment.FEED_IMAGE_URL,
     feedIndexPadding: pad,
     defaultCutoff: {
-      day: String(environment.DEFAULT_CUTOFF_DATE_DAY || '1'),
-      month: String(environment.DEFAULT_CUTOFF_DATE_MONTH || '1'),
-      year: String(environment.DEFAULT_CUTOFF_DATE_YEAR || '2024'),
+      day: environment.DEFAULT_CUTOFF_DATE_DAY || '1',
+      month: environment.DEFAULT_CUTOFF_DATE_MONTH || '1',
+      year: environment.DEFAULT_CUTOFF_DATE_YEAR || '2024',
     },
     feeds,
     coverMode: 'source',
@@ -150,7 +153,10 @@ export function envToAppConfig(environment: Environment): AppConfig {
   };
 }
 
-function mergeStored(stored: StoredConfig, environment: Environment): AppConfig {
+function mergeStored(
+  stored: StoredConfig,
+  environment: Environment,
+): AppConfig {
   const fallback = envToAppConfig(environment);
   const pad = stored.feedIndexPadding
     ? Math.trunc(Number(stored.feedIndexPadding))
@@ -162,12 +168,12 @@ function mergeStored(stored: StoredConfig, environment: Environment): AppConfig 
     feedIndexPadding: Number.isFinite(pad) ? pad : fallback.feedIndexPadding,
     defaultCutoff: stored.defaultCutoff
       ? {
-          day: String(stored.defaultCutoff.day),
-          month: String(stored.defaultCutoff.month),
-          year: String(stored.defaultCutoff.year),
+          day: stored.defaultCutoff.day,
+          month: stored.defaultCutoff.month,
+          year: stored.defaultCutoff.year,
         }
       : fallback.defaultCutoff,
-    feeds: stored.feeds!.map((f) => {
+    feeds: (stored.feeds ?? []).map((f) => {
       return {
         url: f.url,
         cutoffYear: f.cutoffYear,
@@ -218,9 +224,12 @@ export function appConfigToStored(config: AppConfig): StoredConfig {
     defaultCutoff: { ...config.defaultCutoff },
     feeds: config.feeds.map((f) => ({
       url: f.url,
-      ...(f.cutoffYear != undefined && f.cutoffYear !== '' && { cutoffYear: f.cutoffYear }),
-      ...(f.cutoffMonth != undefined && f.cutoffMonth !== '' && { cutoffMonth: f.cutoffMonth }),
-      ...(f.cutoffDay != undefined && f.cutoffDay !== '' && { cutoffDay: f.cutoffDay }),
+      ...(f.cutoffYear != undefined &&
+        f.cutoffYear !== '' && { cutoffYear: f.cutoffYear }),
+      ...(f.cutoffMonth != undefined &&
+        f.cutoffMonth !== '' && { cutoffMonth: f.cutoffMonth }),
+      ...(f.cutoffDay != undefined &&
+        f.cutoffDay !== '' && { cutoffDay: f.cutoffDay }),
       ...(f.mergeTimeline && { mergeTimeline: true }),
     })),
     coverMode: config.coverMode,

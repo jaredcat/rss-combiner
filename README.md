@@ -326,16 +326,16 @@ Use this when configuring **Default cutoff** at the top of the admin form (or `D
 
 #### What each control does
 
-| Control | What it is |
-| --------|------------|
-| **Default cutoff** (day / month / year) | The calendar date used for any source row where you leave the per-feed cutoff **blank**. Only episodes published **after** this date (on the original RSS `pubDate`) are candidates for that row. The default **year** is the target timeline when **Merge this feed’s timeline** applies year-shifting on a row. Set via admin/KV or `DEFAULT_CUTOFF_DATE_*` in `wrangler.toml` `[vars]`. |
-| **Per-feed cutoff** (year, optional month/day) | Overrides the default **for that podcast only**—it controls **which episodes are included** (after that date). It does **not** shift or interleave dates by itself. Leaving everything blank uses the default cutoff. |
-| **Merge this feed’s timeline** (checkbox) | **Enables** year-shifting when this row’s cutoff **year** is older than the default: episode dates move forward so that show can sort with your others. Unchecked: no merge—only cutoff filtering. |
+| Control                                        | What it is                                                                                                                                                                                                                                                                                                                                                                                 |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Default cutoff** (day / month / year)        | The calendar date used for any source row where you leave the per-feed cutoff **blank**. Only episodes published **after** this date (on the original RSS `pubDate`) are candidates for that row. The default **year** is the target timeline when **Merge this feed’s timeline** applies year-shifting on a row. Set via admin/KV or `DEFAULT_CUTOFF_DATE_*` in `wrangler.toml` `[vars]`. |
+| **Per-feed cutoff** (year, optional month/day) | Overrides the default **for that podcast only**—it controls **which episodes are included** (after that date). It does **not** shift or interleave dates by itself. Leaving everything blank uses the default cutoff.                                                                                                                                                                      |
+| **Merge this feed’s timeline** (checkbox)      | **Enables** year-shifting when this row’s cutoff **year** is older than the default: episode dates move forward so that show can sort with your others. Unchecked: no merge—only cutoff filtering.                                                                                                                                                                                         |
 
 #### Choosing values (recommended workflow)
 
 1. **Pick your default cutoff**
-   Set it to the **start of the period you care about** for *most* shows—often **January 1** of a year (e.g. `1 / 1 / 2024`). Everything below assumes episodes must be **newer than** that date unless you override a row.
+   Set it to the **start of the period you care about** for _most_ shows—often **January 1** of a year (e.g. `1 / 1 / 2024`). Everything below assumes episodes must be **newer than** that date unless you override a row.
 
 2. **Simple case: only recent episodes**
    For a podcast where you only want episodes from the last year or two, either leave the row’s cutoff **blank** (inherits the default) or set a **per-feed cutoff year** (e.g. `2023`) so only episodes after that date count.

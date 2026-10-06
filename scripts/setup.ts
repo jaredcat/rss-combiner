@@ -5,6 +5,15 @@ import fs from 'node:fs/promises';
 
 const COVER_FILES = ['cover.jpg', 'cover.jpeg', 'cover.png'] as const;
 
+interface WranglerToml {
+  name?: string;
+  r2_buckets?: { bucket_name?: string }[];
+  vars?: Record<string, string | undefined> & {
+    FEED_TITLE?: string;
+    FEED_IMAGE_URL?: string;
+  };
+}
+
 function warnIfExampleFeeds(wranglerContent: string): void {
   if (!wranglerContent.includes('feeds.example.com')) return;
   console.log('⚠️  Warning: Your wrangler.toml still contains example feeds.');
@@ -117,23 +126,23 @@ async function setupTemplate() {
   const hasExampleFeeds = wranglerContent.includes('feeds.example.com');
   warnIfExampleFeeds(wranglerContent);
 
-  const config = parse(wranglerContent);
-  const workerName = config.name as string;
-  const bucketName = (config.r2_buckets as any)?.[0]?.bucket_name as string;
-  const feedTitle = (config.vars as any)?.FEED_TITLE as string;
-  const feedImageUrl = (config.vars as any)?.FEED_IMAGE_URL as string;
+  const config = parse(wranglerContent) as WranglerToml;
+  const workerName = config.name ?? '';
+  const bucketName = config.r2_buckets?.[0]?.bucket_name ?? '';
+  const feedTitle = config.vars?.FEED_TITLE;
+  const feedImageUrl = config.vars?.FEED_IMAGE_URL;
 
   logCurrentConfig(workerName, bucketName, feedTitle, feedImageUrl);
 
   const localCoverFile = await findExistingFile(COVER_FILES);
   logCoverHints(localCoverFile, feedImageUrl, bucketName);
   logNextSteps(
-    !!workerName?.includes('your-') || !!bucketName?.includes('your-'),
-    !!localCoverFile,
+    workerName.includes('your-') || bucketName.includes('your-'),
+    Boolean(localCoverFile),
   );
   logFeedImageStatus(feedImageUrl);
 
-  const feedCount = Object.keys(config.vars || {}).filter(
+  const feedCount = Object.keys(config.vars ?? {}).filter(
     (key) => key.startsWith('FEED_') && key.endsWith('_URL'),
   ).length;
   logFeedCount(feedCount, hasExampleFeeds);

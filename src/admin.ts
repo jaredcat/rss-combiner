@@ -4,11 +4,11 @@ import type { AppConfig, FeedEntry } from './config';
 /**
 Shown on admin GET when we have the incoming request (deployed URL + upload eligibility).
 */
-export type AdminPageContext = {
+export interface AdminPageContext {
   deployedOrigin: string;
   deployedFeedUrl: string;
   coverUploadEnabled: boolean;
-};
+}
 
 export const ADMIN_PAGE_HINT =
   'Values are stored in Workers KV and override <code>wrangler.toml</code> <code>[vars]</code> when present. Preview updates as you edit; source RSS is cached (~15 minutes per URL). Use “Refresh feed sources” for the latest upstream episodes.';
@@ -153,7 +153,7 @@ export function adminSettingsBody(
   const deployedOrigin = context?.deployedOrigin ?? '';
   const deployedFeedUrl = context?.deployedFeedUrl ?? '';
   const isShowDeployHints = !!deployedOrigin;
-  const coverUploadEnabled = context?.coverUploadEnabled ?? false;
+  const isCoverUploadEnabled = context?.coverUploadEnabled ?? false;
 
   return String.raw`
   <div class="layout">
@@ -177,7 +177,7 @@ export function adminSettingsBody(
     <label for="feedImageUrl">Main podcast image URL <span class="hint">(channel &amp; episode art when using “main cover” mode)</span></label>
     <input id="feedImageUrl" name="feedImageUrl" type="url" value="${escapeHtml(config.feedImageUrl || '')}" placeholder="https://…">
     ${
-      coverUploadEnabled
+      isCoverUploadEnabled
         ? `<div class="cover-tools">
       <input type="file" id="cover-file-input" accept="image/jpeg,image/png,image/webp,image/gif" aria-label="Choose cover image file">
       <button type="button" class="btn-secondary" id="cover-upload-btn">Upload to R2</button>

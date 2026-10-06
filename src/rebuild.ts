@@ -44,7 +44,7 @@ export function jobOutputKey(jobId: string): string {
 
 export type RebuildJobStatus = 'queued' | 'running' | 'ready' | 'failed';
 
-export type RebuildStatus = {
+export interface RebuildStatus {
   jobId: string;
   status: RebuildJobStatus;
   totalFeeds: number;
@@ -55,12 +55,12 @@ export type RebuildStatus = {
   createdAt: string;
   updatedAt: string;
   error?: string;
-};
+}
 
-type PublishedPointer = {
+interface PublishedPointer {
   jobId: string;
   createdAt: string;
-};
+}
 
 export type RebuildMessage =
   | { type: 'process_feed'; jobId: string; feedIndex: number }
@@ -107,7 +107,7 @@ function parseStatus(raw: string | undefined): RebuildStatus | undefined {
     }
     return {
       jobId: parsed.jobId,
-      status: parsed.status as RebuildJobStatus,
+      status: parsed.status,
       totalFeeds: typeof parsed.totalFeeds === 'number' ? parsed.totalFeeds : 0,
       feedIndex: typeof parsed.feedIndex === 'number' ? parsed.feedIndex : 0,
       createdAt: typeof parsed.createdAt === 'string' ? parsed.createdAt : '',
@@ -440,9 +440,6 @@ export async function startRebuild(
   if (!environment.CONFIG_KV) {
     throw new Error('CONFIG_KV binding missing');
   }
-  if (!environment.REBUILD_QUEUE) {
-    throw new Error('REBUILD_QUEUE binding missing');
-  }
 
   const config = await resolveConfig(
     environment as Environment,
@@ -579,8 +576,8 @@ async function publishJobFeed(
     httpMetadata: XML_HTTP_METADATA,
   });
 
-  const claimed = await claimPublishedPointer(environment, jobId, createdAt);
-  if (!claimed) {
+  const isClaimed = await claimPublishedPointer(environment, jobId, createdAt);
+  if (!isClaimed) {
     return false;
   }
 
@@ -613,12 +610,12 @@ async function claimPublishedIfCurrent(
   if (!staged) {
     return;
   }
-  const claimed = await claimPublishedPointer(
+  const isClaimed = await claimPublishedPointer(
     environment,
     job.jobId,
     jobCreatedAt(job),
   );
-  if (!claimed) {
+  if (!isClaimed) {
     return;
   }
   const body = await environment.XML_BUCKET.get(jobOutputKey(job.jobId));
@@ -664,13 +661,13 @@ async function finalize(environment: RebuildEnv, jobId: string): Promise<void> {
     deserializeMergedEpisodes(allSerialized),
   );
 
-  const published = await publishJobFeed(
+  const isPublished = await publishJobFeed(
     environment,
     jobId,
     jobCreatedAt(current),
     xml,
   );
-  if (!published) {
+  if (!isPublished) {
     return;
   }
 

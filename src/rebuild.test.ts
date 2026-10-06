@@ -7,10 +7,10 @@ import {
   type RebuildEnv as RebuildEnvironment,
 } from './rebuild.ts';
 
-type Conditional = {
+interface Conditional {
   etagMatches?: string;
   etagDoesNotMatch?: string;
-};
+}
 
 /**
 Mirrors workerd: a quoted etag in `onlyIf` is a TypeError, not a soft failure.
@@ -119,7 +119,9 @@ function setPublished(jobId: string, createdAt: string): void {
 
 function publishedPointer(): { jobId: string; createdAt: string } | undefined {
   const raw = bucket.store.get(REBUILD_PUBLISHED_R2_KEY);
-  return raw ? JSON.parse(raw.body) : undefined;
+  return raw
+    ? (JSON.parse(raw.body) as { jobId: string; createdAt: string })
+    : undefined;
 }
 
 beforeEach(() => {
