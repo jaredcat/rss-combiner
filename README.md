@@ -221,7 +221,7 @@ Each feed can be configured with the following environment variables:
 - `FEED_XX_CUTOFF_YEAR`: Only include episodes from this year onwards (optional)
 - `FEED_XX_CUTOFF_MONTH`: Cutoff month (optional)
 - `FEED_XX_CUTOFF_DAY`: Cutoff day (optional)
-- `FEED_XX_MERGE_TIMELINE`: Set to `"true"` to enable **Merge this feed’s timeline** (same as the admin checkbox): when on, applies **year-shifting** for an older per-feed cutoff year (mixes that show into the shared timeline).
+- `FEED_XX_MERGE_TIMELINE`: Set to `"true"` to enable **Merge this feed’s timeline** (same as the admin checkbox): when on and this feed’s cutoff year is older than the default, adds `(default year − cutoff year)` to each episode date so the backlog sorts with your other shows.
 
 Where `XX` is a zero-padded number (01, 02, 03, etc.).
 
@@ -336,37 +336,39 @@ Apache `.htaccess` files are **not** applied to Cloudflare Workers. To restrict 
 The combiner supports:
 
 - **Date-based filtering**: Only include episodes **after** a per-feed or default cutoff date (same rules as `main`: each of year / month / day falls back to the default cutoff when omitted on a feed row; cutoff is midnight **local** time on that calendar day, compared to each episode’s original `pubDate`).
-- **Merge this feed’s timeline** (`FEED_XX_MERGE_TIMELINE` / admin checkbox): Optional per feed. When **checked**, enables **year-shifting** (moves that feed’s episode dates forward when its cutoff year is older than the default—this is what interleaves deep back catalogs). When **unchecked**, episode dates stay on their original calendar (no shift), aside from normal cutoff filtering—see the admin UI explainer
+- **Merge this feed’s timeline** (`FEED_XX_MERGE_TIMELINE` / admin checkbox): Optional per feed. Two jobs stay separate: cutoff chooses **which** episodes to include; merge chooses **how they are dated** in the combined feed. When **checked** and the row’s cutoff year is older than the default, the combiner adds `(default year − cutoff year)` to every episode date so that backlog interleaves with your recent shows. When **unchecked**, dates stay on the original calendar—see the admin UI explainer
 
 <a id="first-time-cutoffs"></a>
 
 ### First-time setup: cutoffs and timeline merge
 
-Use this when configuring **Default cutoff** at the top of the admin form (or `DEFAULT_CUTOFF_DATE_*` in `wrangler.toml`), **per-feed** cutoff fields on each source row, and **Merge this feed’s timeline** on each row where you want a merged timeline.
+Use this when configuring **Default cutoff** at the top of the admin form (or `DEFAULT_CUTOFF_DATE_*` in `wrangler.toml`), **per-feed** cutoff fields on each source row, and **Merge this feed’s timeline** on each row where you want year-shifted dating.
+
+Cutoff and merge are **two separate controls**: cutoff decides **which** episodes are included; merge decides **how those episodes are dated** so chronological players mix shows together.
 
 #### What each control does
 
-| Control                                        | What it is                                                                                                                                                                                                                                                                                                                                                                                 |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Default cutoff** (day / month / year)        | The calendar date used for any source row where you leave the per-feed cutoff **blank**. Only episodes published **after** this date (on the original RSS `pubDate`) are candidates for that row. The default **year** is the target timeline when **Merge this feed’s timeline** applies year-shifting on a row. Set via admin/KV or `DEFAULT_CUTOFF_DATE_*` in `wrangler.toml` `[vars]`. |
-| **Per-feed cutoff** (year, optional month/day) | Overrides the default **for that podcast only**—it controls **which episodes are included** (after that date). It does **not** shift or interleave dates by itself. Leaving everything blank uses the default cutoff.                                                                                                                                                                      |
-| **Merge this feed’s timeline** (checkbox)      | **Enables** year-shifting when this row’s cutoff **year** is older than the default: episode dates move forward so that show can sort with your others. Unchecked: no merge—only cutoff filtering.                                                                                                                                                                                         |
+| Control                                        | What it is                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Default cutoff** (day / month / year)        | Filter fallback for any source row that leaves its cutoff blank: only episodes published **after** this date (original RSS `pubDate`) are candidates. The default **year** is also the **shift target** when merge is on for a row. Set via admin/KV or `DEFAULT_CUTOFF_DATE_*` in `wrangler.toml` `[vars]`.                                                                                                 |
+| **Per-feed cutoff** (year, optional month/day) | Overrides the default **for that podcast only**—controls **which** episodes are included (after that date). It does **not** rewrite dates by itself. Leaving everything blank uses the default cutoff.                                                                                                                                                                                                       |
+| **Merge this feed’s timeline** (checkbox)      | Rewrites dating for the combined feed. **Off** = real calendar dates (cutoff filtering only). **On** + a per-feed cutoff **year** older than the default = add `(default year − cutoff year)` to every episode so that cutoff year lines up with the default (e.g. cutoff `2014`, default `2024` → a 2014 ep becomes 2024; a 2015 ep becomes 2025). Without an older cutoff year, the checkbox does nothing. |
 
 #### Choosing values (recommended workflow)
 
 1. **Pick your default cutoff**
-   Set it to the **start of the period you care about** for _most_ shows—often **January 1** of a year (e.g. `1 / 1 / 2024`). Everything below assumes episodes must be **newer than** that date unless you override a row.
+   Set it to the **start of the period you care about** for _most_ shows—often **January 1** of a year (e.g. `1 / 1 / 2024`). That year is also the timeline merge aims at when a row has an older cutoff year.
 
 2. **Simple case: only recent episodes**
-   For a podcast where you only want episodes from the last year or two, either leave the row’s cutoff **blank** (inherits the default) or set a **per-feed cutoff year** (e.g. `2023`) so only episodes after that date count.
+   For a podcast where you only want episodes from the last year or two, either leave the row’s cutoff **blank** (inherits the default) or set a **per-feed cutoff year** (e.g. `2023`) so only episodes after that date count. Leave merge **off**.
 
 3. **Chronological mix across shows (long back catalog)**
-   If you add a podcast with **many years** of old episodes, use the **per-feed cutoff** to choose **which** episodes are in scope (e.g. an older cutoff year to include more history). That **only filters** by date—it does **not** mix timelines by itself.
-   To **interleave** that show with your others, also turn on **Merge this feed’s timeline** on that row. With merge on and a per-feed cutoff **year** older than the default, the combiner **adds years** to that feed’s episode dates so they sort alongside your other podcasts. **Oh No**-style deep catalogs are a common example.
+   If you add a podcast with **many years** of old episodes, use the **per-feed cutoff** to choose **which** episodes are in scope (e.g. an older cutoff year to include more history). That **only filters**—without merge, that backlog still sorts before your other shows.
+   To **interleave** that show, also turn on **Merge this feed’s timeline** on that row. With merge on and cutoff year `2014` vs default `2024`, the combiner **adds 10 years** to each episode date so spacing inside the show is preserved but the block sorts alongside your recent podcasts.
 
 4. **When to use “Merge this feed’s timeline” on a row**
-   - **Check it** when you want **year-shifting** for that row: the row’s cutoff year must be **older** than the default (step 3), and merge must be **on**—otherwise no interleaving. With merge **off**, episodes keep their real calendar dates (subject only to cutoff filtering).
-   - Leave it **off** for a feed where you only want real dates (no merge), or when the row’s cutoff year matches the default (nothing to shift anyway).
+   - **Check it** when you want year-shifted dating: the row’s cutoff year must be **older** than the default, and merge must be **on**—otherwise nothing shifts. With merge **off**, episodes keep their real calendar dates (subject only to cutoff filtering).
+   - Leave it **off** for feeds where you want real dates, or when the row’s cutoff year matches the default (nothing to shift anyway).
 
 5. **Preview**
    Use **Live preview** on the admin page after changing cutoffs; row headings show each source’s channel title after a successful preview.

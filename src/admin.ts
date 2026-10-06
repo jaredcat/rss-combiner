@@ -1,4 +1,4 @@
-import { escapeHtml } from 'workers-mini-admin';
+import { adminForm, escapeHtml, type Field } from 'workers-mini-admin';
 import type { AppConfig, FeedEntry } from './config';
 
 /**
@@ -24,18 +24,14 @@ export const ADMIN_APP_CSS = `
     .panel { min-width: 0; }
     .panel-card { padding: 1rem 1rem 1.25rem; }
     @media (min-width: 640px) { .panel-card { padding: 1.15rem 1.25rem 1.35rem; } }
-    .feed-row { position: relative; }
-    .feed-row .feed-remove { margin-top: 0.75rem; font-size: 0.9rem; }
-    .feed-merge-timeline { font-weight: normal; margin-top: 0.5rem; display: flex; align-items: flex-start; gap: 0.35rem; }
-    .feed-merge-timeline input { width: auto; margin: 0.2rem 0.35rem 0 0; flex-shrink: 0; }
-    .feed-merge-timeline-block { margin-top: 0.75rem; }
+    .list-item-heading { margin: 0 0 0.35rem 0; font-weight: 700; font-size: 0.95rem; }
     .feed-merge-timeline-oneline { font-size: 0.8rem; color: #666; font-weight: normal; margin: 0.3rem 0 0 0; line-height: 1.3; }
     .feed-merge-timeline-explainer { margin: 0.75rem 0 1rem 0; font-size: 0.88rem; border: 1px solid #e2e8f0; border-radius: 8px; padding: 0.5rem 0.75rem; background: #fff; }
     .feed-merge-timeline-explainer summary { cursor: pointer; font-weight: 600; color: #2d3748; }
     .feed-merge-timeline-explainer .hint { margin: 0.65rem 0 0 0; }
     .feed-merge-timeline-explainer .hint p { margin: 0.45rem 0 0 0; }
     .feed-merge-timeline-explainer .hint p:first-child { margin-top: 0.35rem; }
-    #feed-add { margin-top: 0.5rem; }
+    .list-field > .list-add { margin-top: 0.5rem; }
     .deployed-url-card { background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.88rem; }
     .deployed-url-card .deployed-label { font-weight: 700; color: #2d3748; margin: 0 0 0.5rem 0; font-size: 0.8rem; text-transform: uppercase; letter-spacing: .03em; }
     .deployed-line { margin: 0.35rem 0; word-break: break-all; }
@@ -81,169 +77,253 @@ export const ADMIN_APP_CSS = `
     #preview-refresh-feeds { font: inherit; padding: 0.45rem 0.75rem; margin-top: 0.35rem; cursor: pointer; border-radius: 8px; border: 1px solid #cbd5e0; background: #f7fafc; min-height: 44px; }
 `;
 
-function feedFieldsetHtml(index: number, feed: FeedEntry): string {
-  const url = feed.url ? escapeHtml(feed.url) : '';
-  const cy = feed.cutoffYear ? escapeHtml(feed.cutoffYear) : '';
-  const cm = feed.cutoffMonth ? escapeHtml(feed.cutoffMonth) : '';
-  const cd = feed.cutoffDay ? escapeHtml(feed.cutoffDay) : '';
-  const ds = feed.mergeTimeline ? ' checked' : '';
+const FEED_LIST_HINT_HTML = `Add one row per RSS 2.0 URL. Use the cutoff fields to only include items published <em>after</em> that date (leave blank to use the default cutoff from the top of the form). After preview, each row’s heading shows that source’s RSS channel title (not stored; updates when you preview).
+<details class="feed-merge-timeline-explainer">
+  <summary>How cutoffs &amp; timeline merge work</summary>
+  <div class="hint">
+    <p><strong>Two separate controls</strong></p>
+    <p><strong>1. Cutoff</strong> — Which episodes to include. Only items published <em>after</em> the cutoff (original RSS date) are kept. Blank fields use the default cutoff above.</p>
+    <p><strong>2. Merge this feed’s timeline</strong> — How those episodes are dated in the combined feed. Off = real dates. On + an older per-feed cutoff year = add years so that cutoff year lines up with the default year (e.g. cutoff <code>2014</code>, default <code>2024</code> → a 2014 episode becomes 2024; a 2015 episode becomes 2025). Without an older cutoff year, the checkbox does nothing.</p>
+    <p><strong>Why?</strong> Cutoff alone can pull in years of backlog that all sort before your other shows. Merge interleaves that history into your recent timeline. See <code>README.md</code> for the full walkthrough.</p>
+  </div>
+</details>`;
 
-  return `<fieldset class="feed-row" data-feed-row>
-    <legend>Source feed ${index + 1}</legend>
-    <label>Feed URL</label>
-    <input type="url" name="feed_${index}_url" value="${url}" placeholder="https://…">
-
-    <div class="row feed-cutoffs">
-      <label>Cutoff year <input type="number" name="feed_${index}_cutoffYear" min="1970" max="2100" placeholder="optional" value="${cy}"></label>
-      <label>month <input type="number" name="feed_${index}_cutoffMonth" min="1" max="12" placeholder="optional" value="${cm}"></label>
-      <label>day <input type="number" name="feed_${index}_cutoffDay" min="1" max="31" placeholder="optional" value="${cd}"></label>
-    </div>
-    <div class="feed-merge-timeline-block">
-      <label class="feed-merge-timeline">
-        <input type="checkbox" name="feed_${index}_mergeTimeline"${ds}>
-        <span><strong>Merge this feed’s timeline</strong></span>
-      </label>
-      <p class="feed-merge-timeline-oneline">Turn on when this row’s cutoff year is <strong>older</strong> than the default cutoff year above—details in <strong>How cutoffs &amp; timeline merge work</strong>.</p>
-    </div>
-    <button type="button" class="feed-remove">Remove feed</button>
-  </fieldset>`;
-}
-
-function buildFeedsSection(config: AppConfig): string {
-  const list =
-    config.feeds.length > 0 ? config.feeds : [{ url: '' } as FeedEntry];
-  return list.map((f, index) => feedFieldsetHtml(index, f)).join('');
-}
-
-/**
-Template for JS: FEEDIDX replaced with row index (0, 1, …)
-*/
-const FEED_ROW_TEMPLATE = `<fieldset class="feed-row" data-feed-row>
-    <legend>Source feed</legend>
-    <label>Feed URL</label>
-    <input type="url" name="feed_FEEDIDX_url" placeholder="https://…">
-    <div class="row feed-cutoffs">
-      <label>Cutoff year <input type="number" name="feed_FEEDIDX_cutoffYear" min="1970" max="2100" placeholder="optional"></label>
-      <label>month <input type="number" name="feed_FEEDIDX_cutoffMonth" min="1" max="12" placeholder="optional"></label>
-      <label>day <input type="number" name="feed_FEEDIDX_cutoffDay" min="1" max="31" placeholder="optional"></label>
-    </div>
-    <div class="feed-merge-timeline-block">
-      <label class="feed-merge-timeline">
-        <input type="checkbox" name="feed_FEEDIDX_mergeTimeline">
-        <span><strong>Merge this feed’s timeline</strong></span>
-      </label>
-      <p class="feed-merge-timeline-oneline">Turn on when this row’s cutoff year is <strong>older</strong> than the default cutoff year above—details in <strong>How cutoffs &amp; timeline merge work</strong>.</p>
-    </div>
-    <button type="button" class="feed-remove">Remove feed</button>
-  </fieldset>`;
+const MERGE_TIMELINE_ONELINE_HTML =
+  '<p class="feed-merge-timeline-oneline">Rewrites this show’s years to line up with the default (needs an <strong>older</strong> cutoff year)—details in <strong>How cutoffs &amp; timeline merge work</strong>.</p>';
 
 // Apple's podcast namespace URI is an identifier, not a request.
 // eslint-disable-next-line sonarjs/no-clear-text-protocols, unicorn/prefer-https
 const ITUNES_NAMESPACE = 'http://www.itunes.com/dtds/podcast-1.0.dtd';
 
+function feedListValues(config: AppConfig): Record<string, string | boolean>[] {
+  const list =
+    config.feeds.length > 0 ? config.feeds : [{ url: '' } as FeedEntry];
+  return list.map((feed) => ({
+    url: feed.url,
+    cutoffYear: feed.cutoffYear ?? '',
+    cutoffMonth: feed.cutoffMonth ?? '',
+    cutoffDay: feed.cutoffDay ?? '',
+    mergeTimeline: feed.mergeTimeline === true,
+  }));
+}
+
+const EMPTY_ADMIN_CONTEXT: AdminPageContext = {
+  deployedOrigin: '',
+  deployedFeedUrl: '',
+  coverUploadEnabled: false,
+};
+
+function deployedHintsHtml(context: AdminPageContext): string {
+  if (!context.deployedOrigin) {
+    return '';
+  }
+  return `<div class="deployed-url-card">
+  <p class="deployed-label">This deployment</p>
+  <p class="deployed-line"><span class="k">Worker URL</span> <code>${escapeHtml(context.deployedOrigin)}</code></p>
+  <p class="deployed-line"><span class="k">Combined RSS</span> <code id="deployed-feed-url">${escapeHtml(context.deployedFeedUrl)}</code></p>
+  <button type="button" class="btn-secondary" id="use-deployed-base">Use worker URL as public base</button>
+</div>`;
+}
+
+function coverToolsHtml(isCoverUploadEnabled: boolean): string {
+  if (isCoverUploadEnabled) {
+    return `<div class="cover-tools">
+  <input type="file" id="cover-file-input" accept="image/jpeg,image/png,image/webp,image/gif" aria-label="Choose cover image file">
+  <button type="button" class="btn-secondary" id="cover-upload-btn">Upload to R2</button>
+  <span id="cover-upload-msg" class="hint" role="status"></span>
+</div><p class="hint">Uploads replace <code>cover.jpg</code> in your R2 bucket and fill the image URL above.</p>`;
+  }
+  return `<p class="hint">Browser upload needs your bucket’s public <code>*.r2.dev</code> URL: set <code>R2_PUBLIC_BASE_URL</code> or <code>FEED_IMAGE_URL</code> in <code>wrangler.toml</code>, then redeploy.</p>`;
+}
+
 /**
-Inner admin UI for `createAdmin` (`wrapBody: false`).
-Chrome (title, flash, logout) comes from workers-mini-admin.
+Declarative settings fields for `workers-mini-admin` (list / row / hintHtml / pattern).
 */
-export function adminSettingsBody(
+export function adminSettingsFields(
   config: AppConfig,
-  context?: AdminPageContext,
-): string {
-  const mainChecked = config.coverMode === 'main' ? ' checked' : '';
-  const perFeedMainChecked =
-    config.coverMode === 'per_feed_main' ? ' checked' : '';
-  const sourceChecked = config.coverMode === 'source' ? ' checked' : '';
-  const podcastTypeSelected = config.feedType === 'podcast' ? ' selected' : '';
-  const genericTypeSelected = config.feedType === 'generic' ? ' selected' : '';
+  context: AdminPageContext = EMPTY_ADMIN_CONTEXT,
+): Field[] {
+  const deployed = deployedHintsHtml(context);
+  return [
+    ...(deployed ? [{ type: 'html' as const, html: deployed }] : []),
+    {
+      type: 'text',
+      name: 'feedTitle',
+      label: 'Feed title',
+      value: config.feedTitle,
+      required: true,
+    },
+    {
+      type: 'select',
+      name: 'feedType',
+      label: 'Feed type',
+      value: config.feedType,
+      options: [
+        { value: 'podcast', label: 'Podcast' },
+        { value: 'generic', label: 'Generic RSS' },
+      ],
+    },
+    {
+      type: 'html',
+      html: `<p class="hint">One type for the whole combined feed. <strong>Podcast</strong> adds iTunes season, episode, and artwork tags (use this for podcast apps). <strong>Generic RSS</strong> keeps titles, links, descriptions, enclosures, and <code>content:encoded</code> without those tags. Item titles include the source feed name in both modes.</p>`,
+    },
+    {
+      type: 'text',
+      name: 'outputFilename',
+      label: 'Output filename',
+      value: config.outputFilename,
+      pattern: String.raw`[A-Za-z0-9][A-Za-z0-9._-]{0,62}\.xml`,
+      required: true,
+      spellcheck: false,
+      hintHtml: '(public path; also served at <code>/</code>)',
+    },
+    {
+      type: 'html',
+      html: `<p class="hint">Default is <code>feed.xml</code>. If subscribers already use the version 1 URL, set this to <code>podcasts.xml</code> and save.</p>`,
+    },
+    {
+      type: 'url',
+      name: 'feedImageUrl',
+      label: 'Main image URL',
+      value: config.feedImageUrl || '',
+      placeholder: 'https://…',
+      hintHtml:
+        '(channel image; episode art in podcast mode when using “main cover”)',
+    },
+    {
+      type: 'html',
+      html: coverToolsHtml(context.coverUploadEnabled),
+    },
+    {
+      type: 'url',
+      name: 'publicBaseUrl',
+      label: 'Public base URL',
+      value: config.publicBaseUrl,
+      required: true,
+      hintHtml:
+        '(no trailing slash; RSS <code>link</code> / <code>atom:link</code> — usually your worker URL)',
+    },
+    {
+      type: 'html',
+      html: `<p class="hint">Default cutoff applies to any source row that leaves its cutoff blank. Per-feed overrides and <strong>Merge this feed’s timeline</strong> are on each source row — open <strong>How cutoffs &amp; timeline merge work</strong> there, or see <code>README.md</code>.</p>`,
+    },
+    {
+      type: 'row',
+      fields: [
+        {
+          type: 'number',
+          name: 'defaultCutoffDay',
+          label: 'Default cutoff — day',
+          value: config.defaultCutoff.day,
+          min: 1,
+          max: 31,
+        },
+        {
+          type: 'number',
+          name: 'defaultCutoffMonth',
+          label: 'month',
+          value: config.defaultCutoff.month,
+          min: 1,
+          max: 12,
+        },
+        {
+          type: 'number',
+          name: 'defaultCutoffYear',
+          label: 'year',
+          value: config.defaultCutoff.year,
+          min: 1970,
+          max: 2100,
+        },
+      ],
+    },
+    {
+      type: 'radio',
+      name: 'coverMode',
+      label: 'Item artwork',
+      value: config.coverMode,
+      hintHtml:
+        'Podcast mode writes these as <code>itunes:image</code> on each item. Generic RSS uses the main image as the channel image only.',
+      options: [
+        {
+          value: 'source',
+          label: 'Use source episode / feed artwork',
+        },
+        {
+          value: 'per_feed_main',
+          label:
+            'Use each source podcast’s channel (main) cover for all episodes from that feed',
+        },
+        {
+          value: 'main',
+          label: 'Use combined feed’s main image for every episode',
+        },
+      ],
+    },
+    {
+      type: 'list',
+      name: 'feed',
+      legend: 'Source feeds',
+      hintHtml: FEED_LIST_HINT_HTML,
+      minItems: 1,
+      addLabel: 'Add feed',
+      removeLabel: 'Remove feed',
+      itemFields: [
+        {
+          type: 'html',
+          html: '<p class="list-item-heading" data-channel-heading>Source feed</p>',
+        },
+        {
+          type: 'url',
+          name: 'url',
+          label: 'Feed URL',
+          placeholder: 'https://…',
+        },
+        {
+          type: 'row',
+          fields: [
+            {
+              type: 'number',
+              name: 'cutoffYear',
+              label: 'Cutoff year',
+              min: 1970,
+              max: 2100,
+              placeholder: 'optional',
+            },
+            {
+              type: 'number',
+              name: 'cutoffMonth',
+              label: 'month',
+              min: 1,
+              max: 12,
+              placeholder: 'optional',
+            },
+            {
+              type: 'number',
+              name: 'cutoffDay',
+              label: 'day',
+              min: 1,
+              max: 31,
+              placeholder: 'optional',
+            },
+          ],
+        },
+        {
+          type: 'checkbox',
+          name: 'mergeTimeline',
+          label: 'Merge this feed’s timeline',
+        },
+        {
+          type: 'html',
+          html: MERGE_TIMELINE_ONELINE_HTML,
+        },
+      ],
+      values: feedListValues(config),
+    },
+  ];
+}
 
-  const deployedOrigin = context?.deployedOrigin ?? '';
-  const deployedFeedUrl = context?.deployedFeedUrl ?? '';
-  const isShowDeployHints = !!deployedOrigin;
-  const isCoverUploadEnabled = context?.coverUploadEnabled ?? false;
-
-  return String.raw`
-  <div class="layout">
-  <div class="panel">
-  <form id="admin-settings-form" method="post" action="/admin">
-    <div class="panel-card">
-    ${
-      isShowDeployHints
-        ? `<div class="deployed-url-card">
-      <p class="deployed-label">This deployment</p>
-      <p class="deployed-line"><span class="k">Worker URL</span> <code>${escapeHtml(deployedOrigin)}</code></p>
-      <p class="deployed-line"><span class="k">Combined RSS</span> <code id="deployed-feed-url">${escapeHtml(deployedFeedUrl)}</code></p>
-      <button type="button" class="btn-secondary" id="use-deployed-base">Use worker URL as public base</button>
-    </div>`
-        : ''
-    }
-
-    <label for="feedTitle">Feed title</label>
-    <input id="feedTitle" name="feedTitle" type="text" value="${escapeHtml(config.feedTitle)}" required>
-
-    <label for="feedType">Feed type</label>
-    <select id="feedType" name="feedType">
-      <option value="podcast"${podcastTypeSelected}>Podcast</option>
-      <option value="generic"${genericTypeSelected}>Generic RSS</option>
-    </select>
-    <p class="hint">One type for the whole combined feed. Every source is merged the same way, and podcast and blog URLs can sit in the same list — nothing checks that a URL “is” a podcast. <strong>Podcast</strong> adds iTunes season, episode, and artwork tags (use this for podcast apps). <strong>Generic RSS</strong> keeps titles, links, descriptions, enclosures, and <code>content:encoded</code> without those tags. Item titles include the source feed name in both modes.</p>
-
-    <label for="outputFilename">Output filename <span class="hint">(public path; also served at <code>/</code>)</span></label>
-    <input id="outputFilename" name="outputFilename" type="text" value="${escapeHtml(config.outputFilename)}" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,62}\.xml" required spellcheck="false">
-    <p class="hint">Default is <code>feed.xml</code>. If subscribers already use the version 1 URL, set this to <code>podcasts.xml</code> and save.</p>
-
-    <label for="feedImageUrl">Main image URL <span class="hint">(channel image; episode art in podcast mode when using “main cover”)</span></label>
-    <input id="feedImageUrl" name="feedImageUrl" type="url" value="${escapeHtml(config.feedImageUrl || '')}" placeholder="https://…">
-    ${
-      isCoverUploadEnabled
-        ? `<div class="cover-tools">
-      <input type="file" id="cover-file-input" accept="image/jpeg,image/png,image/webp,image/gif" aria-label="Choose cover image file">
-      <button type="button" class="btn-secondary" id="cover-upload-btn">Upload to R2</button>
-      <span id="cover-upload-msg" class="hint" role="status"></span>
-    </div><p class="hint">Uploads replace <code>cover.jpg</code> in your R2 bucket and fill the image URL above.</p>`
-        : `<p class="hint">Browser upload needs your bucket’s public <code>*.r2.dev</code> URL: set <code>R2_PUBLIC_BASE_URL</code> or <code>FEED_IMAGE_URL</code> in <code>wrangler.toml</code>, then redeploy.</p>`
-    }
-
-    <label for="publicBaseUrl">Public base URL <span class="hint">(no trailing slash; RSS <code>link</code> / <code>atom:link</code> — usually your worker URL)</span></label>
-    <input id="publicBaseUrl" name="publicBaseUrl" type="url" value="${escapeHtml(config.publicBaseUrl)}" required>
-
-    <p class="hint">Default cutoff applies to any source row that leaves its cutoff blank. Per-feed overrides and <strong>Merge this feed’s timeline</strong> are on each source row — open <strong>How cutoffs &amp; timeline merge work</strong> there, or see <code>README.md</code>.</p>
-    <div class="row">
-      <label>Default cutoff — day <input name="defaultCutoffDay" type="number" min="1" max="31" value="${escapeHtml(config.defaultCutoff.day)}"></label>
-      <label>month <input name="defaultCutoffMonth" type="number" min="1" max="12" value="${escapeHtml(config.defaultCutoff.month)}"></label>
-      <label>year <input name="defaultCutoffYear" type="number" min="1970" max="2100" value="${escapeHtml(config.defaultCutoff.year)}"></label>
-    </div>
-
-    <fieldset>
-      <legend>Item artwork</legend>
-      <p class="hint">Podcast mode writes these as <code>itunes:image</code> on each item. Generic RSS uses the main image as the channel image only.</p>
-      <label><input type="radio" name="coverMode" value="source"${sourceChecked}> Use source episode / feed artwork</label>
-      <label><input type="radio" name="coverMode" value="per_feed_main"${perFeedMainChecked}> Use each source podcast’s channel (main) cover for all episodes from that feed</label>
-      <label><input type="radio" name="coverMode" value="main"${mainChecked}> Use combined feed’s main image for every episode</label>
-    </fieldset>
-
-    <fieldset>
-      <legend>Source feeds</legend>
-      <p class="hint">Add one row per RSS 2.0 URL. Use the cutoff fields to only include items published <em>after</em> that date (leave blank to use the default cutoff from the top of the form). After preview, each row’s heading shows that source’s RSS channel title (not stored; updates when you preview).</p>
-      <details class="feed-merge-timeline-explainer">
-        <summary>How cutoffs &amp; timeline merge work</summary>
-        <div class="hint">
-          <p><strong>Cutoff date</strong> — Only episodes whose original publication date is <em>after</em> this row’s cutoff are included. Blank per-feed fields use the default cutoff at the top of the form.</p>
-          <p><strong>Merge this feed’s timeline</strong> — When checked and this row’s cutoff year is older than the default, episode dates are shifted forward toward that default year so the combined feed sorts as one mix. Unchecked: no year shift (only cutoff filtering). If this row has no older cutoff year, leave the box off—nothing to merge.</p>
-          <p><strong>Why merge?</strong> In chronological listening, a show with a long history can otherwise dominate the queue. Cutoff fields only choose <em>which</em> episodes are included. To interleave a deep backlog (e.g. cutoff year <code>2014</code> vs default <code>2024</code>), set that older per-feed year and check <strong>Merge this feed’s timeline</strong> on the row. See <code>README.md</code> for the full walkthrough.</p>
-        </div>
-      </details>
-      <div id="feeds-container">${buildFeedsSection(config)}</div>
-      <button type="button" id="feed-add">Add feed</button>
-    </fieldset>
-
-    <div class="actions">
-      <button type="submit" class="btn-primary">Save to KV</button>
-    </div>
-    </div>
-  </form>
-  <p class="hint" style="margin-top:0.75rem">Saving writes settings to KV and queues a rebuild (one source feed per job, then merge). Refresh this page for status; <code id="output-path-label">/${escapeHtml(config.outputFilename)}</code> updates when the job finishes. Hourly cron and authenticated <code>/deploy-trigger</code> also enqueue rebuilds.</p>
-  </div>
-  <div class="panel" id="preview-wrap">
+function previewPanelHtml(): string {
+  return `<div class="panel" id="preview-wrap">
     <div class="panel-card">
     <h2>Live preview</h2>
     <p id="preview-status" class="hint">Generating…</p>
@@ -261,9 +341,11 @@ export function adminSettingsBody(
     <div id="preview-rendered"></div>
     <pre id="preview-xml" class="hidden"></pre>
     </div>
-  </div>
-  </div>
-  <template id="feed-row-template">${FEED_ROW_TEMPLATE}</template>
+  </div>`;
+}
+
+function adminClientScript(): string {
+  return String.raw`
   <script>
   (function () {
     var ITUNES_NS = '${ITUNES_NAMESPACE}';
@@ -271,73 +353,46 @@ export function adminSettingsBody(
     var statusEl = document.getElementById('preview-status');
     var xmlEl = document.getElementById('preview-xml');
     var renderedEl = document.getElementById('preview-rendered');
-    var feedsContainer = document.getElementById('feeds-container');
-    var tpl = document.getElementById('feed-row-template');
-    var feedAdd = document.getElementById('feed-add');
-    if (!form || !statusEl || !xmlEl || !renderedEl || !feedsContainer || !tpl) return;
+    var feedsList = form && form.querySelector('[data-list-name="feed"]');
+    if (!form || !statusEl || !xmlEl || !renderedEl || !feedsList) return;
 
-    function renumberFeedRows() {
-      var rows = feedsContainer.querySelectorAll('[data-feed-row]');
-      rows.forEach(function (row, i) {
-        row.querySelectorAll('[name^="feed_"]').forEach(function (el) {
-          var n = el.getAttribute('name');
-          if (!n) return;
-          var m = n.match(/^feed_\d+_(.+)$/);
-          if (m) el.setAttribute('name', 'feed_' + i + '_' + m[1]);
-        });
+    function feedRows() {
+      return feedsList.querySelectorAll(':scope > .list-item');
+    }
+
+    function updateFeedHeadings() {
+      feedRows().forEach(function (row, i) {
         var ch = row.getAttribute('data-channel-title');
         var tn = ch && String(ch).trim();
-        var leg = row.querySelector('legend');
-        if (leg) {
-          leg.textContent = tn
+        var heading = row.querySelector('[data-channel-heading]');
+        if (heading) {
+          heading.textContent = tn
             ? 'Source feed ' + (i + 1) + ' — ' + tn
             : 'Source feed ' + (i + 1);
         }
       });
     }
 
-    feedsContainer.addEventListener('input', function (ev) {
+    feedsList.addEventListener('input', function (ev) {
       var t = ev.target;
       if (!t || !t.name || !/^feed_\d+_url$/.test(t.name)) return;
-      var row = t.closest && t.closest('[data-feed-row]');
+      var row = t.closest && t.closest('.list-item');
       if (row) row.removeAttribute('data-channel-title');
-      renumberFeedRows();
+      updateFeedHeadings();
     });
 
-    function bindRemove(row) {
-      var btn = row.querySelector('.feed-remove');
-      if (!btn) return;
-      btn.addEventListener('click', function () {
-        var rows = feedsContainer.querySelectorAll('[data-feed-row]');
-        if (rows.length <= 1) {
-          row.querySelectorAll('input[type="url"], input[type="number"]').forEach(function (inp) { inp.value = ''; });
-          row.removeAttribute('data-channel-title');
-          row.querySelectorAll('input[type="checkbox"]').forEach(function (i) { i.checked = false; });
-          return;
-        }
-        row.remove();
-        renumberFeedRows();
-        schedule();
-      });
-    }
-
-    feedsContainer.querySelectorAll('[data-feed-row]').forEach(function (row) { bindRemove(row); });
-
-    if (feedAdd) {
-      feedAdd.addEventListener('click', function () {
-        var n = feedsContainer.querySelectorAll('[data-feed-row]').length;
-        var html = tpl.innerHTML.replace(/FEEDIDX/g, String(n));
-        var wrap = document.createElement('div');
-        wrap.innerHTML = html.trim();
-        var row = wrap.firstElementChild;
-        if (row) {
-          feedsContainer.appendChild(row);
-          bindRemove(row);
-          renumberFeedRows();
+    form.addEventListener('click', function (ev) {
+      var t = ev.target;
+      if (!(t && t.closest)) return;
+      if (t.closest('.list-add') || t.closest('.list-item-remove')) {
+        setTimeout(function () {
+          updateFeedHeadings();
           schedule();
-        }
-      });
-    }
+        }, 0);
+      }
+    });
+
+    updateFeedHeadings();
 
     function firstChildText(el, tag) {
       var ch = el.getElementsByTagName(tag)[0];
@@ -548,7 +603,7 @@ export function adminSettingsBody(
         xmlEl.textContent = j.xml;
         renderRssPreview(j.xml);
         if (j.channelTitles && j.channelTitles.length) {
-          var rows = feedsContainer.querySelectorAll('[data-feed-row]');
+          var rows = feedRows();
           j.channelTitles.forEach(function (t, i) {
             var row = rows[i];
             if (!row) return;
@@ -558,7 +613,7 @@ export function adminSettingsBody(
           for (var k = j.channelTitles.length; k < rows.length; k++) {
             rows[k].setAttribute('data-channel-title', '');
           }
-          renumberFeedRows();
+          updateFeedHeadings();
         }
         if (j.previewTruncated) {
           var which = (j.previewSlice || previewSlice) === 'oldest' ? 'oldest' : 'newest';
@@ -639,5 +694,36 @@ export function adminSettingsBody(
     }
   })();
   </script>
+`;
+}
+
+/**
+Inner admin UI for `createAdmin` (`wrapBody: false`).
+Settings form is declarative Fields; preview panel + client JS stay BYO.
+Chrome (title, flash, logout) comes from workers-mini-admin.
+*/
+export function adminSettingsBody(
+  config: AppConfig,
+  context?: AdminPageContext,
+): string {
+  const pageContext = context ?? EMPTY_ADMIN_CONTEXT;
+  const formHtml = adminForm({
+    id: 'admin-settings-form',
+    action: '/admin',
+    submitLabel: 'Save to KV',
+    fields: adminSettingsFields(config, pageContext),
+  });
+
+  return `
+  <div class="layout">
+  <div class="panel">
+  <div class="panel-card">
+  ${formHtml}
+  </div>
+  <p class="hint" style="margin-top:0.75rem">Saving writes settings to KV and queues a rebuild (one source feed per job, then merge). Refresh this page for status; <code id="output-path-label">/${escapeHtml(config.outputFilename)}</code> updates when the job finishes. Hourly cron and authenticated <code>/deploy-trigger</code> also enqueue rebuilds.</p>
+  </div>
+  ${previewPanelHtml()}
+  </div>
+  ${adminClientScript()}
 `;
 }

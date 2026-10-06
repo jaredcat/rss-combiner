@@ -15,3 +15,4 @@ minimumReleaseAgeExclude:
   - '@typescript-eslint/visitor-keys@8.71.1'
   - eslint-config-narwhal@2.1.1
   - typescript-eslint@8.71.1
+  - workers-mini-admin@0.2.0
