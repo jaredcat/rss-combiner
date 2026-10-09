@@ -2,7 +2,7 @@ allowBuilds:
   esbuild: true
   workerd: true
 minimumReleaseAgeExclude:
-  - '@cloudflare/workers-types@5.20261006.1'
+  - '@cloudflare/workers-types@5.20261006.1 || 5.20261009.1'
   - '@typescript-eslint/eslint-plugin@8.71.1'
   - '@typescript-eslint/parser@8.71.1'
   - '@typescript-eslint/project-service@8.71.1'
@@ -16,3 +16,6 @@ minimumReleaseAgeExclude:
   - eslint-config-narwhal@2.1.1
   - typescript-eslint@8.71.1
   - workers-mini-admin@0.2.0
+  - '@cloudflare/vitest-plugin@1.4.0'
+  - miniflare@5.20261006.1-alpha
+  - wrangler@4.149.0
